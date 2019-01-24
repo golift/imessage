@@ -25,7 +25,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/davidnewhall/go-imessage"
+	"github.com/golift/imessage"
 )
 
 func checkErr(err error) {

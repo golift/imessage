@@ -38,6 +38,8 @@ type Messages interface {
 	SetErrorLogger(logger Logger)
 	IncomingCall(match string, callback func(Incoming))
 	IncomingChan(match string, channel chan Incoming)
+	RemoveChan(match string) int
+	RemoveCall(match string) int
 	Start() error
 	Stop()
 }

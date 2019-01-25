@@ -76,8 +76,8 @@ func (c *Config) processIncomingMessages() {
 		for {
 			select {
 			case msg := <-c.inChan:
-				msg.callBacks(c.funcBinds)
-				msg.mesgChans(c.chanBinds)
+				c.callBacks(msg)
+				c.mesgChans(msg)
 			case <-c.stopIncoming:
 				stopDB <- true
 				return
@@ -192,20 +192,20 @@ func (c *Config) getCurrentID() error {
 	return errors.New("no message rows found")
 }
 
-func (m *Incoming) callBacks(funcs []*funcBinding) {
-	for _, bind := range funcs {
-		matched, _ := regexp.MatchString(bind.Match, m.Text)
-		if matched {
-			go bind.Func(*m)
+func (c *Config) callBacks(msg Incoming) {
+	for _, bind := range c.funcBinds {
+		matched, err := regexp.MatchString(bind.Match, msg.Text)
+		if err = c.checkErr(err, bind.Match); err == nil && matched {
+			go bind.Func(msg)
 		}
 	}
 }
 
-func (m *Incoming) mesgChans(chans []*chanBinding) {
-	for _, bind := range chans {
-		matched, _ := regexp.MatchString(bind.Match, m.Text)
-		if matched {
-			bind.Chan <- *m
+func (c *Config) mesgChans(msg Incoming) {
+	for _, bind := range c.chanBinds {
+		matched, err := regexp.MatchString(bind.Match, msg.Text)
+		if err = c.checkErr(err, bind.Match); err == nil && matched {
+			bind.Chan <- msg
 		}
 	}
 }

@@ -31,15 +31,14 @@ type funcBinding struct {
 // IncomingChan connects a channel to a matched string in a message.
 // Similar to the IncomingCall method, this will send an incming message
 // to a channel. Any message with text matching `match` is sent.
-// Use '*' for all messages. Use "" for files and empty messages.
+// Use '.*' for all messages. The channel blocks, so avoid long operations.
 func (c *Config) IncomingChan(match string, channel chan Incoming) {
 	c.chanBinds = append(c.chanBinds, &chanBinding{Match: match, Chan: channel})
 }
 
 // IncomingCall connects a callback function to a matched string in a message.
 // This methods creates a callback that is run in a go routine any time
-// a message containing `match` is found
-// Use '*' for all messages. Use "" for files and empty messages.
+// a message containing `match` is found. Use '.*' for all messages.
 func (c *Config) IncomingCall(match string, callback func(Incoming)) {
 	c.funcBinds = append(c.funcBinds, &funcBinding{Match: match, Func: callback})
 }
@@ -195,9 +194,8 @@ func (c *Config) getCurrentID() error {
 
 func (m *Incoming) callBacks(funcs []*funcBinding) {
 	for _, bind := range funcs {
-		matched, err := regexp.MatchString(bind.Match, m.Text)
-		_ = c.checkErr(err, bind.Match)
-		if (bind.Match == "*" && m.Text != "") || matched {
+		matched, _ := regexp.MatchString(bind.Match, m.Text)
+		if matched {
 			go bind.Func(*m)
 		}
 	}
@@ -205,9 +203,8 @@ func (m *Incoming) callBacks(funcs []*funcBinding) {
 
 func (m *Incoming) mesgChans(chans []*chanBinding) {
 	for _, bind := range chans {
-		matched, err := regexp.MatchString(bind.Match, m.Text)
-		_ = c.checkErr(err, bind.Match)
-		if (bind.Match == "*" && m.Text != "") || matched {
+		matched, _ := regexp.MatchString(bind.Match, m.Text)
+		if matched {
 			bind.Chan <- *m
 		}
 	}

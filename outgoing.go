@@ -10,6 +10,24 @@ import (
 	"github.com/pkg/errors"
 )
 
+// Outgoing struct is used to send a message to someone.
+// Fll it out and pass it into config.Send()
+type Outgoing struct {
+	ID   string          // ID is only used in logging and in the Response callback.
+	To   string          // To represents the message recipient.
+	Text string          // Text is the body of the message or file path.
+	File bool            // If File is true, then Text is assume to be a filepath to send.
+	Call func(*Response) // Call is the function that is run after a message is sent off.
+}
+
+// Response is the outgoing-message response provided to a callback function.
+type Response struct {
+	ID   string
+	To   string
+	Text string
+	Errs []error
+}
+
 // Send a message.
 func (c *Config) Send(msg Outgoing) {
 	c.outChan <- msg

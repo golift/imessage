@@ -45,42 +45,6 @@ type Messages interface {
 // Logger is a base type to deal with changing log outs.
 type Logger func(msg string, fmt ...interface{})
 
-// Outgoing struct is used to send a message to someone.
-// Fll it out and pass it into config.Send()
-type Outgoing struct {
-	ID   string          // ID is only used in logging and in the Response callback.
-	To   string          // To represents the message recipient.
-	Text string          // Text is the body of the message or file path.
-	File bool            // If File is true, then Text is assume to be a filepath to send.
-	Call func(*Response) // Call is the function that is run after a message is sent off.
-}
-
-// Response is the sent-message response provided to a callback function.
-type Response struct {
-	ID   string
-	To   string
-	Text string
-	Errs []error
-}
-
-// Incoming is represents a message from someone.
-type Incoming struct {
-	RowID int64  // RowID is the unique database row id.
-	From  string // From is the handle of the user who sent the message.
-	Text  string // Text is the body of the message.
-	File  bool   // File is true if a file is attached. (no way to access it atm)
-}
-
-type chanBinding struct {
-	Match string
-	Chan  chan Incoming
-}
-
-type funcBinding struct {
-	Match string
-	Func  func(Incoming)
-}
-
 // Init reads incoming messages destined for iMessage buddies.
 // The messages are queued in a channel and sent 1 at a time with a small
 // delay between. Each message may have a callback attached that is kicked

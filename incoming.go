@@ -3,6 +3,7 @@ package imessage
 import (
 	"errors"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -194,7 +195,9 @@ func (c *Config) getCurrentID() error {
 
 func (m *Incoming) callBacks(funcs []*funcBinding) {
 	for _, bind := range funcs {
-		if (bind.Match == "*" && m.Text != "") || strings.Contains(m.Text, bind.Match) {
+		matched, err := regexp.MatchString(bind.Match, m.Text)
+		_ = c.checkErr(err, bind.Match)
+		if (bind.Match == "*" && m.Text != "") || matched {
 			go bind.Func(*m)
 		}
 	}
@@ -202,7 +205,9 @@ func (m *Incoming) callBacks(funcs []*funcBinding) {
 
 func (m *Incoming) mesgChans(chans []*chanBinding) {
 	for _, bind := range chans {
-		if (bind.Match == "*" && m.Text != "") || strings.Contains(m.Text, bind.Match) {
+		matched, err := regexp.MatchString(bind.Match, m.Text)
+		_ = c.checkErr(err, bind.Match)
+		if (bind.Match == "*" && m.Text != "") || matched {
 			bind.Chan <- *m
 		}
 	}

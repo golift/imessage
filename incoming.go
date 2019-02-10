@@ -32,24 +32,30 @@ type funcBinding struct {
 // Similar to the IncomingCall method, this will send an incming message
 // to a channel. Any message with text matching `match` is sent.
 // Use '.*' for all messages. The channel blocks, so avoid long operations.
-func (c *Config) IncomingChan(match string, channel chan Incoming) {
-	c.chanBinds = append(c.chanBinds, &chanBinding{Match: match, Chan: channel})
+func (m *Messages) IncomingChan(match string, channel chan Incoming) {
+	m.chanLock.Lock()
+	defer m.chanLock.Unlock()
+	m.chanBinds = append(m.chanBinds, &chanBinding{Match: match, Chan: channel})
 }
 
 // IncomingCall connects a callback function to a matched string in a message.
 // This methods creates a callback that is run in a go routine any time
 // a message containing `match` is found. Use '.*' for all messages.
-func (c *Config) IncomingCall(match string, callback func(Incoming)) {
-	c.funcBinds = append(c.funcBinds, &funcBinding{Match: match, Func: callback})
+func (m *Messages) IncomingCall(match string, callback func(Incoming)) {
+	m.funcLock.Lock()
+	defer m.funcLock.Unlock()
+	m.funcBinds = append(m.funcBinds, &funcBinding{Match: match, Func: callback})
 }
 
 // RemoveChan deletes a message match to channel made with IncomingChan()
-func (c *Config) RemoveChan(match string) int {
+func (m *Messages) RemoveChan(match string) int {
+	m.chanLock.Lock()
+	defer m.chanLock.Unlock()
 	removed := 0
-	for i, rlen := 0, len(c.chanBinds); i < rlen; i++ {
+	for i, rlen := 0, len(m.chanBinds); i < rlen; i++ {
 		j := i - removed
-		if c.chanBinds[j].Match == match {
-			c.chanBinds = append(c.chanBinds[:j], c.chanBinds[j+1:]...)
+		if m.chanBinds[j].Match == match {
+			m.chanBinds = append(m.chanBinds[:j], m.chanBinds[j+1:]...)
 			removed++
 		}
 	}
@@ -57,12 +63,14 @@ func (c *Config) RemoveChan(match string) int {
 }
 
 // RemoveCall deletes a message match to function callback made with IncomingCall()
-func (c *Config) RemoveCall(match string) int {
+func (m *Messages) RemoveCall(match string) int {
+	m.funcLock.Lock()
+	defer m.funcLock.Unlock()
 	removed := 0
-	for i, rlen := 0, len(c.chanBinds); i < rlen; i++ {
+	for i, rlen := 0, len(m.chanBinds); i < rlen; i++ {
 		j := i - removed
-		if c.funcBinds[j].Match == match {
-			c.funcBinds = append(c.funcBinds[:j], c.funcBinds[j+1:]...)
+		if m.funcBinds[j].Match == match {
+			m.funcBinds = append(m.funcBinds[:j], m.funcBinds[j+1:]...)
 			removed++
 		}
 	}
@@ -70,15 +78,15 @@ func (c *Config) RemoveCall(match string) int {
 }
 
 // processIncomingMessages starts the iMessage-sqlite3 db watcher routine(s).
-func (c *Config) processIncomingMessages() {
+func (m *Messages) processIncomingMessages() {
 	stopDB := make(chan bool)
 	go func() {
 		for {
 			select {
-			case msg := <-c.inChan:
-				c.callBacks(msg)
-				c.mesgChans(msg)
-			case <-c.stopIncoming:
+			case msg := <-m.inChan:
+				m.callBacks(msg)
+				m.mesgChans(msg)
+			case <-m.stopIncoming:
 				stopDB <- true
 				return
 			}
@@ -86,17 +94,17 @@ func (c *Config) processIncomingMessages() {
 	}()
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
-		_ = c.checkErr(err, "fsnotify failed, polling instead")
-		go c.pollSQL(stopDB)
+		_ = m.checkErr(err, "fsnotify failed, polling instead")
+		go m.pollSQL(stopDB)
 		return
 	}
-	go c.fsnotifySQL(watcher, stopDB)
-	if err = watcher.Add(filepath.Dir(c.SQLPath)); err != nil {
-		_ = c.checkErr(err, "fsnotify watcher failed")
+	go m.fsnotifySQL(watcher, stopDB)
+	if err = watcher.Add(filepath.Dir(m.config.SQLPath)); err != nil {
+		_ = m.checkErr(err, "fsnotify watcher failed")
 	}
 }
 
-func (c *Config) fsnotifySQL(watcher *fsnotify.Watcher, stopDB chan bool) {
+func (m *Messages) fsnotifySQL(watcher *fsnotify.Watcher, stopDB chan bool) {
 	var last time.Time
 	defer func() {
 		_ = watcher.Close()
@@ -105,106 +113,110 @@ func (c *Config) fsnotifySQL(watcher *fsnotify.Watcher, stopDB chan bool) {
 		select {
 		case event, ok := <-watcher.Events:
 			if !ok {
-				c.eLogf("fsnotify watcher failed. incoming message routines stopped")
-				c.Stop()
+				m.eLogf("fsnotify watcher failed. incoming message routines stopped")
+				m.Stop()
 			}
 			if event.Op&fsnotify.Write == fsnotify.Write &&
-				last.Add(c.Interval).Before(time.Now()) {
-				c.dLogf("modified file: %v", event.Name)
+				last.Add(m.config.Interval).Before(time.Now()) {
+				m.dLogf("modified file: %v", event.Name)
 				last = time.Now()
-				c.checkForNewMessages()
+				m.checkForNewMessages()
 			}
 		case err, ok := <-watcher.Errors:
 			if !ok {
-				c.eLogf("fsnotify watcher errors failed. incoming message routines stopped.")
-				c.Stop()
+				m.eLogf("fsnotify watcher errors failed. incoming message routines stopped.")
+				m.Stop()
 			}
-			_ = c.checkErr(err, "fsnotify watcher")
+			_ = m.checkErr(err, "fsnotify watcher")
 		case <-stopDB:
 			return
 		}
 	}
 }
 
-func (c *Config) pollSQL(stopDB chan bool) {
-	ticker := time.NewTicker(c.Interval)
+func (m *Messages) pollSQL(stopDB chan bool) {
+	ticker := time.NewTicker(m.config.Interval)
 	for {
 		select {
 		case <-stopDB:
 			return
 		case <-ticker.C:
-			c.checkForNewMessages()
+			m.checkForNewMessages()
 		}
 	}
 }
 
-func (c *Config) checkForNewMessages() {
-	if c.getDB() != nil {
+func (m *Messages) checkForNewMessages() {
+	if m.getDB() != nil {
 		return
 	}
-	defer c.closeDB()
+	defer m.closeDB()
 	sql := `SELECT message.rowid as rowid, handle.id as handle, cache_has_attachments, message.text as text ` +
 		`FROM message INNER JOIN handle ON message.handle_id = handle.ROWID ` +
 		`WHERE is_from_me=0 AND message.rowid > $id ORDER BY message.date ASC`
-	query := c.db.Prep(sql)
-	query.SetInt64("$id", c.startID)
+	query := m.db.Prep(sql)
+	query.SetInt64("$id", m.startID)
 	defer func() {
-		_ = c.checkErr(query.Finalize(), sql)
+		_ = m.checkErr(query.Finalize(), sql)
 	}()
 	for {
 		if hasRow, err := query.Step(); err != nil {
-			_ = c.checkErr(err, sql)
+			_ = m.checkErr(err, sql)
 			return
 		} else if !hasRow {
 			return
 		}
-		c.startID = query.GetInt64("rowid")
-		m := Incoming{
-			RowID: c.startID,
+		m.startID = query.GetInt64("rowid")
+		msg := Incoming{
+			RowID: m.startID,
 			From:  strings.TrimSpace(query.GetText("handle")),
 			Text:  strings.TrimSpace(query.GetText("text")),
 		}
 		if query.GetInt64("cache_has_attachments") == 1 {
-			m.File = true
+			msg.File = true
 		}
-		c.inChan <- m
-		c.dLogf("new message id %d from: %s size: %d", m.RowID, m.From, len(m.Text))
+		m.inChan <- msg
+		m.dLogf("new message id %d from: %s size: %d", msg.RowID, msg.From, len(msg.Text))
 	}
 }
 
-func (c *Config) getCurrentID() error {
+func (m *Messages) getCurrentID() error {
 	sql := `SELECT MAX(rowid) AS id FROM message`
-	if err := c.getDB(); err != nil {
+	if err := m.getDB(); err != nil {
 		return err
 	}
-	defer c.closeDB()
-	query := c.db.Prep(sql)
+	defer m.closeDB()
+	query := m.db.Prep(sql)
 	defer func() {
-		_ = c.checkErr(query.Finalize(), sql)
+		_ = m.checkErr(query.Finalize(), sql)
 	}()
-	c.dLogf("querying current id")
+	m.dLogf("querying current id")
 	hasrow, err := query.Step()
-	_ = c.checkErr(err, sql)
+	_ = m.checkErr(err, sql)
 	if hasrow && err == nil {
-		c.startID = query.GetInt64("id")
+		m.startID = query.GetInt64("id")
 		return nil
 	}
 	return errors.New("no message rows found")
 }
 
-func (c *Config) callBacks(msg Incoming) {
-	for _, bind := range c.funcBinds {
+func (m *Messages) callBacks(msg Incoming) {
+	m.funcLock.RLock()
+	defer m.funcLock.RUnlock()
+	for _, bind := range m.funcBinds {
 		matched, err := regexp.MatchString(bind.Match, msg.Text)
-		if err = c.checkErr(err, bind.Match); err == nil && matched {
+		if err = m.checkErr(err, bind.Match); err == nil && matched {
 			go bind.Func(msg)
 		}
 	}
 }
 
-func (c *Config) mesgChans(msg Incoming) {
-	for _, bind := range c.chanBinds {
+func (m *Messages) mesgChans(msg Incoming) {
+	m.chanLock.RLock()
+	defer m.chanLock.RUnlock()
+	for _, bind := range m.chanBinds {
 		matched, err := regexp.MatchString(bind.Match, msg.Text)
-		if err = c.checkErr(err, bind.Match); err == nil && matched {
+		if err = m.checkErr(err, bind.Match); err == nil && matched {
 			bind.Chan <- msg
 		}
 	}

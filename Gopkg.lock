@@ -2,32 +2,44 @@
 
 
 [[projects]]
+  digest = "1:305f70b04fb6c50e99390fb8b7979a8340671f22c7b3450539ae11a2702c83c9"
   name = "crawshaw.io/sqlite"
   packages = ["."]
+  pruneopts = "UT"
   revision = "3eafba8f1fa218c020ecd7408262a7469c95e008"
   version = "v0.1.2"
 
 [[projects]]
+  digest = "1:abeb38ade3f32a92943e5be54f55ed6d6e3b6602761d74b4aab4c9dd45c18abd"
   name = "github.com/fsnotify/fsnotify"
   packages = ["."]
+  pruneopts = "UT"
   revision = "c2828203cd70a50dcccfb2761f8b1f8ceef9a8e9"
   version = "v1.4.7"
 
 [[projects]]
+  digest = "1:cf31692c14422fa27c83a05292eb5cbe0fb2775972e8f1f8446a71549bd8980b"
   name = "github.com/pkg/errors"
   packages = ["."]
+  pruneopts = "UT"
   revision = "ba968bfe8b2f7e042a574c888954fccecfa385b4"
   version = "v0.8.1"
 
 [[projects]]
   branch = "master"
+  digest = "1:8b466798e96432c23185ca32826702885299f94eb644c9a8dedb79771dff383a"
   name = "golang.org/x/sys"
   packages = ["unix"]
-  revision = "b90733256f2e882e81d52f9126de08df5615afd9"
+  pruneopts = "UT"
+  revision = "3b5209105503162ded1863c307ac66fec31120dd"
 
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "bcd94bce5cf00ab690e9e0f7242d23488aad274e3e54f55ad62601cc6b9375bd"
+  input-imports = [
+    "crawshaw.io/sqlite",
+    "github.com/fsnotify/fsnotify",
+    "github.com/pkg/errors",
+  ]
   solver-name = "gps-cdcl"
   solver-version = 1

@@ -25,7 +25,7 @@ type chanBinding struct {
 
 type funcBinding struct {
 	Match string
-	Func  func(Incoming)
+	Func  func(msg Incoming)
 }
 
 // IncomingChan connects a channel to a matched string in a message.
@@ -41,7 +41,7 @@ func (m *Messages) IncomingChan(match string, channel chan Incoming) {
 // IncomingCall connects a callback function to a matched string in a message.
 // This methods creates a callback that is run in a go routine any time
 // a message containing `match` is found. Use '.*' for all messages.
-func (m *Messages) IncomingCall(match string, callback func(Incoming)) {
+func (m *Messages) IncomingCall(match string, callback func(msg Incoming)) {
 	m.funcLock.Lock()
 	defer m.funcLock.Unlock()
 	m.funcBinds = append(m.funcBinds, &funcBinding{Match: match, Func: callback})

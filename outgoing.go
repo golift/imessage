@@ -10,8 +10,11 @@ import (
 	"github.com/pkg/errors"
 )
 
+// OSAScriptPath is the path to the osascript binary. macOS only.
+var OSAScriptPath = "/usr/bin/osascript"
+
 // Outgoing struct is used to send a message to someone.
-// Fll it out and pass it into config.Send()
+// Fll it out and pass it into Messages.Send() to fire off a new iMessage.
 type Outgoing struct {
 	ID   string          // ID is only used in logging and in the Response callback.
 	To   string          // To represents the message recipient.
@@ -21,21 +24,27 @@ type Outgoing struct {
 }
 
 // Response is the outgoing-message response provided to a callback function.
+// Any callback chan or function will receive this type. It represents "what happeened"
+// when trying to send a message. If `success` is false `Errs` should contain error(s).
 type Response struct {
 	ID   string
 	To   string
 	Text string
+	Sent bool
 	Errs []error
 }
 
-// Send a message.
+// Send is the method used to send an iMessage.
+// The messages are queued in a channel and sent 1 at a time with a small
+// delay between. Each message may have a callback attached that is kicked
+// off in a go routine after the message is sent.
 func (m *Messages) Send(msg Outgoing) {
 	m.outChan <- msg
 }
 
 // RunAppleScript runs a script on the local system.
-func (m *Messages) RunAppleScript(id string, scripts []string, retry int) (errs []error) {
-	arg := []string{"/usr/bin/osascript"}
+func (m *Messages) RunAppleScript(id string, scripts []string, retry int) (success bool, errs []error) {
+	arg := []string{OSAScriptPath}
 	for _, s := range scripts {
 		arg = append(arg, "-e", s)
 	}
@@ -46,6 +55,7 @@ func (m *Messages) RunAppleScript(id string, scripts []string, retry int) (errs 
 		cmd.Stdout = &out
 		cmd.Stderr = &out
 		if err := cmd.Run(); err == nil {
+			success = true
 			break
 		} else if i >= retry {
 			errs = append(errs, errors.Wrapf(errors.New(out.String()), "cmd.Run: %v", err.Error()))
@@ -56,7 +66,7 @@ func (m *Messages) RunAppleScript(id string, scripts []string, retry int) (errs 
 		}
 		time.Sleep(750 * time.Millisecond)
 	}
-	return nil
+	return
 }
 
 // ClearMessages deletes all conversations in MESSAGES.APP.
@@ -75,7 +85,7 @@ func (m *Messages) ClearMessages() error {
 	close every window
 end tell
 `
-	if err := m.RunAppleScript("wipe", []string{arg}, 1); err != nil {
+	if success, err := m.RunAppleScript("wipe", []string{arg}, 1); !success && err != nil {
 		return err[0]
 	}
 	time.Sleep(75 * time.Millisecond)
@@ -90,9 +100,9 @@ func (m *Messages) processOutgoingMessages() {
 		select {
 		case msg := <-m.outChan:
 			newMsg = true
-			err := m.sendiMessage(msg)
+			success, err := m.sendiMessage(msg)
 			if msg.Call != nil {
-				go msg.Call(&Response{ID: msg.ID, To: msg.To, Text: msg.Text, Errs: err})
+				go msg.Call(&Response{ID: msg.ID, To: msg.To, Text: msg.Text, Errs: err, Sent: success})
 			}
 			// Give iMessage time to do its thing.
 			time.Sleep(300 * time.Millisecond)
@@ -109,7 +119,8 @@ func (m *Messages) processOutgoingMessages() {
 	}
 }
 
-func (m *Messages) sendiMessage(msg Outgoing) []error {
+// sendiMessage runs the applesripts to send a message and close the iMessage windows.
+func (m *Messages) sendiMessage(msg Outgoing) (bool, []error) {
 	arg := []string{`tell application "Messages" to send "` + msg.Text + `" to buddy "` + msg.To +
 		`" of (1st service whose service type = iMessage)`}
 	if _, err := os.Stat(msg.Text); err == nil && msg.File {
@@ -117,12 +128,10 @@ func (m *Messages) sendiMessage(msg Outgoing) []error {
 			`" of (1st service whose service type = iMessage)`}
 	}
 	arg = append(arg, `tell application "Messages" to close every window`)
-	if errs := m.RunAppleScript(msg.ID, arg, 3); errs != nil {
-		return errs
-	}
+	success, errs := m.RunAppleScript(msg.ID, arg, 3)
 	if !msg.File {
 		// Text messages go out so quickly we need to sleep a bit to avoid sending duplicates.
-		time.Sleep(300 * time.Millisecond)
+		time.Sleep(500 * time.Millisecond)
 	}
-	return nil
+	return success, errs
 }

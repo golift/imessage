@@ -10,7 +10,8 @@ import (
 	"github.com/fsnotify/fsnotify"
 )
 
-// Incoming is represents a message from someone.
+// Incoming is represents a message from someone. This struct is filled out
+// and sent to incoming callback methods and/or to bound channels.
 type Incoming struct {
 	RowID int64  // RowID is the unique database row id.
 	From  string // From is the handle of the user who sent the message.
@@ -29,8 +30,8 @@ type funcBinding struct {
 }
 
 // IncomingChan connects a channel to a matched string in a message.
-// Similar to the IncomingCall method, this will send an incming message
-// to a channel. Any message with text matching `match` is sent.
+// Similar to the IncomingCall method, this will send an incoming message
+// to a channel. Any message with text matching `match` is sent. Regexp supported.
 // Use '.*' for all messages. The channel blocks, so avoid long operations.
 func (m *Messages) IncomingChan(match string, channel chan Incoming) {
 	m.chanLock.Lock()
@@ -40,7 +41,7 @@ func (m *Messages) IncomingChan(match string, channel chan Incoming) {
 
 // IncomingCall connects a callback function to a matched string in a message.
 // This methods creates a callback that is run in a go routine any time
-// a message containing `match` is found. Use '.*' for all messages.
+// a message containing `match` is found. Use '.*' for all messages. Supports regexp.
 func (m *Messages) IncomingCall(match string, callback func(msg Incoming)) {
 	m.funcLock.Lock()
 	defer m.funcLock.Unlock()

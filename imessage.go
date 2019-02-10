@@ -82,84 +82,84 @@ func Init(c *Config) (*Messages, error) {
 
 // Start starts the iMessage-sqlite3 db and outgoing message watcher routine(s).
 // Outgoing messages wont work and incoming message are ignored until Start() runs.
-func (c *Messages) Start() error {
-	if c.running {
+func (m *Messages) Start() error {
+	if m.running {
 		return errors.New("already running")
-	} else if err := c.getCurrentID(); err != nil {
+	} else if err := m.getCurrentID(); err != nil {
 		return err
 	}
-	c.running = true
-	c.dLogf("starting with id %d", c.startID)
-	go c.processIncomingMessages()
-	go c.processOutgoingMessages()
+	m.running = true
+	m.dLogf("starting with id %d", m.startID)
+	go m.processIncomingMessages()
+	go m.processOutgoingMessages()
 	return nil
 }
 
 // Stop cancels the iMessage-sqlite3 db and outgoing message watcher routine(s).
 // Outgoing messages stop working when the routines are stopped.
 // Incoming messages are ignored once this runs.
-func (c *Messages) Stop() {
-	defer func() { c.running = false }()
-	if c.running {
-		c.stopOutgoing <- true
-		c.stopIncoming <- true
+func (m *Messages) Stop() {
+	defer func() { m.running = false }()
+	if m.running {
+		m.stopOutgoing <- true
+		m.stopIncoming <- true
 	}
 }
 
 // SetDebugLogger allows a library consumer to do whatever they want with the debug logs from this package.
 // Pass in a Logger interface like log.Printf to capture messages created by the go routines.
 // The DebugLog struct item is exported and can also be set directly without a method call.
-func (c *Messages) SetDebugLogger(logger Logger) {
-	c.DebugLog = logger
+func (m *Messages) SetDebugLogger(logger Logger) {
+	m.DebugLog = logger
 }
 
 // SetErrorLogger allows a library consumer to do whatever they want with the error logs from this package.
 // Pass in a Logger interface like log.Printf to capture messages created by the go routines.
 // The ErrorLog struct item is exported and can also be set directly without a method call.
-func (c *Messages) SetErrorLogger(logger Logger) {
-	c.ErrorLog = logger
+func (m *Messages) SetErrorLogger(logger Logger) {
+	m.ErrorLog = logger
 }
 
 // dLogf logs a debug message.
-func (c *Messages) dLogf(msg string, v ...interface{}) {
-	if c.DebugLog != nil {
-		c.DebugLog("[DEBUG] "+msg, v...)
+func (m *Messages) dLogf(msg string, v ...interface{}) {
+	if m.DebugLog != nil {
+		m.DebugLog("[DEBUG] "+msg, v...)
 	}
 }
 
 // eLogf logs an error message.
-func (c *Messages) eLogf(msg string, v ...interface{}) {
-	if c.ErrorLog != nil {
-		c.ErrorLog("[ERROR] "+msg, v...)
+func (m *Messages) eLogf(msg string, v ...interface{}) {
+	if m.ErrorLog != nil {
+		m.ErrorLog("[ERROR] "+msg, v...)
 	}
 }
 
 // getDB opens a database connection and locks access, so only one reader can
 // access the db at once.
-func (c *Messages) getDB() error {
-	c.dbLock.Lock()
-	c.dLogf("opening database")
+func (m *Messages) getDB() error {
+	m.dbLock.Lock()
+	m.dLogf("opening database")
 	var err error
-	c.db, err = sqlite.OpenConn(c.config.SQLPath, 1)
-	return c.checkErr(err, "opening database")
+	m.db, err = sqlite.OpenConn(m.config.SQLPath, 1)
+	return m.checkErr(err, "opening database")
 }
 
 // closeDB stops reading the sqlite db and unlocks the read lock.
-func (c *Messages) closeDB() {
-	defer c.dbLock.Unlock()
-	c.dLogf("closing database")
-	if c.db != nil {
-		_ = c.checkErr(c.db.Close(), "closing database")
-		c.db = nil
+func (m *Messages) closeDB() {
+	defer m.dbLock.Unlock()
+	m.dLogf("closing database")
+	if m.db != nil {
+		_ = m.checkErr(m.db.Close(), "closing database")
+		m.db = nil
 	} else {
-		c.dLogf("db was nil?")
+		m.dLogf("db was nil?")
 	}
 }
 
 // checkErr writes an error to Logger if it exists.
-func (c *Messages) checkErr(err error, msg string) error {
+func (m *Messages) checkErr(err error, msg string) error {
 	if err != nil {
-		c.eLogf("%s: %q\n", msg, err)
+		m.eLogf("%s: %q\n", msg, err)
 	}
 	return err
 }

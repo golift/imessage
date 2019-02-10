@@ -8,8 +8,7 @@
 //
 // The library uses `fsnotify` to poll for db updates, then checks the database for changes.
 // Only new messages are processed. If somehow `fsnotify` fails it will fall back to polling
-// the database. Pay attention to the debug/error logs. See the example below for an easy
-// way to log the library messages.
+// the database. Pay attention to the debug/error logs.
 package imessage
 
 import (

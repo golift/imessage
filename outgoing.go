@@ -24,8 +24,8 @@ type Outgoing struct {
 }
 
 // Response is the outgoing-message response provided to a callback function.
-// Any callback chan or function will receive this type. It represents "what happeened"
-// when trying to send a message. If `success` is false `Errs` should contain error(s).
+// An outgoing callback function will receive this type. It represents "what happeened"
+// when trying to send a message. If `Sent` is false, `Errs` should contain error(s).
 type Response struct {
 	ID   string
 	To   string
@@ -42,7 +42,9 @@ func (m *Messages) Send(msg Outgoing) {
 	m.outChan <- msg
 }
 
-// RunAppleScript runs a script on the local system.
+// RunAppleScript runs a script on the local system. While not directly related to
+// iMessage and Messages.app, this library uses AppleScript to send messages using
+// imessage. To that end, the method to run scripts is also exposed for convenience.
 func (m *Messages) RunAppleScript(id string, scripts []string, retry int) (success bool, errs []error) {
 	arg := []string{OSAScriptPath}
 	for _, s := range scripts {

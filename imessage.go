@@ -19,6 +19,9 @@ import (
 	"crawshaw.io/sqlite"
 )
 
+// DefaultDuration is the minimum interval that must pass before opening the database again.
+var DefaultDuration = 250 * time.Millisecond
+
 // Config is our input data, data store, and interface to methods.
 // Fill out this struct and pass it into imessage.Init()
 type Config struct {
@@ -82,8 +85,11 @@ func Init(c *Config) (*Messages, error) {
 	} else if c.Retries > 10 {
 		c.Retries = 10
 	}
-	if c.Interval.Duration == 0 || c.SQLPath == "" {
+	if c.SQLPath == "" {
 		return m, nil
+	}
+	if c.Interval.Duration == 0 {
+		c.Interval.Duration = DefaultDuration
 	} else if c.Interval.Duration > 10*time.Second {
 		c.Interval.Duration = 10 * time.Second
 	}

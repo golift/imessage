@@ -37,10 +37,9 @@ func checkErr(err error) {
 func main() {
 	iChatDBLocation := "/Users/<your username>/Library/Messages/chat.db"
 	c := &imessage.Config{
-		SQLPath:   iChatDBLocation,        // Set this correctly
-		QueueSize: 10,                     // 10-20 is fine. If your server is super busy, tune this.
-		Retries:   3,                      // run the applescript up to this many times to send a message. 3 works well.
-		Interval:  250 * time.Millisecond, // minimum duration between db polls.
+		SQLPath:   iChatDBLocation, // Set this correctly
+		QueueSize: 10,              // 10-20 is fine. If your server is super busy, tune this.
+		Retries:   3,               // run the applescript up to this many times to send a message. 3 works well.
 	}
 	s, err := imessage.Init(c)
 	checkErr(err)

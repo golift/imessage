@@ -24,19 +24,6 @@
 #   go-tests = true
 #   unused-packages = true
 
-
-[[constraint]]
-  name = "crawshaw.io/sqlite"
-  version = "0.1.2"
-
-[[constraint]]
-  name = "github.com/fsnotify/fsnotify"
-  version = "1.4.7"
-
-[[constraint]]
-  name = "github.com/pkg/errors"
-  version = "0.8.1"
-
 [prune]
   go-tests = true
   unused-packages = true

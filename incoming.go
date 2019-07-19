@@ -118,7 +118,7 @@ func (m *Messages) fsnotifySQL(watcher *fsnotify.Watcher, stopDB chan bool) {
 				m.Stop()
 			}
 			if event.Op&fsnotify.Write == fsnotify.Write &&
-				last.Add(m.config.Interval).Before(time.Now()) {
+				last.Add(m.config.Interval.Duration).Before(time.Now()) {
 				m.dLogf("modified file: %v", event.Name)
 				last = time.Now()
 				m.checkForNewMessages()
@@ -136,7 +136,7 @@ func (m *Messages) fsnotifySQL(watcher *fsnotify.Watcher, stopDB chan bool) {
 }
 
 func (m *Messages) pollSQL(stopDB chan bool) {
-	ticker := time.NewTicker(m.config.Interval)
+	ticker := time.NewTicker(m.config.Interval.Round(time.Second))
 	for {
 		select {
 		case <-stopDB:
@@ -207,6 +207,7 @@ func (m *Messages) callBacks(msg Incoming) {
 	for _, bind := range m.funcBinds {
 		matched, err := regexp.MatchString(bind.Match, msg.Text)
 		if err = m.checkErr(err, bind.Match); err == nil && matched {
+			m.DebugLog("found matching message handler func: " + bind.Match)
 			go bind.Func(msg)
 		}
 	}
@@ -218,6 +219,7 @@ func (m *Messages) mesgChans(msg Incoming) {
 	for _, bind := range m.chanBinds {
 		matched, err := regexp.MatchString(bind.Match, msg.Text)
 		if err = m.checkErr(err, bind.Match); err == nil && matched {
+			m.DebugLog("found matching message handler chan: " + bind.Match)
 			bind.Chan <- msg
 		}
 	}

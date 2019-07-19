@@ -22,11 +22,22 @@ import (
 // Config is our input data, data store, and interface to methods.
 // Fill out this struct and pass it into imessage.Init()
 type Config struct {
-	ClearMsgs bool          `xml:"clear_messages" json:"clear_messages" toml:"clear_messages" yaml:"clear_messages"`
-	QueueSize int           `xml:"queue_size" json:"queue_size" toml:"queue_size" yaml:"queue_size"`
-	Retries   int           `xml:"retries" json:"retries" toml:"retries" yaml:"retries"`
-	SQLPath   string        `xml:"sql_path" json:"sql_path" toml:"sql_path" yaml:"sql_path"`
-	Interval  time.Duration `xml:"interval" json:"interval" toml:"interval" yaml:"interval"`
+	ClearMsgs bool     `xml:"clear_messages" json:"clear_messages,_omitempty" toml:"clear_messages,_omitempty" yaml:"clear_messages"`
+	QueueSize int      `xml:"queue_size" json:"queue_size,_omitempty" toml:"queue_size,_omitempty" yaml:"queue_size"`
+	Retries   int      `xml:"retries" json:"retries,_omitempty" toml:"retries,_omitempty" yaml:"retries"`
+	SQLPath   string   `xml:"sql_path" json:"sql_path,_omitempty" toml:"sql_path,_omitempty" yaml:"sql_path"`
+	Interval  Duration `xml:"interval" json:"interval,_omitempty" toml:"interval,_omitempty" yaml:"interval"`
+}
+
+// Duration allows unmarshalling a time value from a config file.
+type Duration struct {
+	time.Duration
+}
+
+// UnmarshalText parses a duration type from a config file.
+func (d *Duration) UnmarshalText(data []byte) (err error) {
+	d.Duration, err = time.ParseDuration(string(data))
+	return
 }
 
 // Messages is the interface into this module. Init() returns this struct.
@@ -71,10 +82,10 @@ func Init(c *Config) (*Messages, error) {
 	} else if c.Retries > 10 {
 		c.Retries = 10
 	}
-	if c.Interval == 0 || c.SQLPath == "" {
+	if c.Interval.Duration == 0 || c.SQLPath == "" {
 		return m, nil
-	} else if c.Interval > 10*time.Second {
-		c.Interval = 10 * time.Second
+	} else if c.Interval.Duration > 10*time.Second {
+		c.Interval.Duration = 10 * time.Second
 	}
 	// Try to open, query and close the datbase.
 	return m, m.getCurrentID()

@@ -207,7 +207,7 @@ func (m *Messages) callBacks(msg Incoming) {
 	for _, bind := range m.funcBinds {
 		matched, err := regexp.MatchString(bind.Match, msg.Text)
 		if err = m.checkErr(err, bind.Match); err == nil && matched {
-			m.DebugLog("found matching message handler func: " + bind.Match)
+			m.dLogf("found matching message handler func: %v", bind.Match)
 			go bind.Func(msg)
 		}
 	}
@@ -219,7 +219,7 @@ func (m *Messages) mesgChans(msg Incoming) {
 	for _, bind := range m.chanBinds {
 		matched, err := regexp.MatchString(bind.Match, msg.Text)
 		if err = m.checkErr(err, bind.Match); err == nil && matched {
-			m.DebugLog("found matching message handler chan: " + bind.Match)
+			m.dLogf("found matching message handler chan: %v", bind.Match)
 			bind.Chan <- msg
 		}
 	}

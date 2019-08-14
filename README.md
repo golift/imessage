@@ -2,7 +2,7 @@
 
 Go Library used to interact with iMessage (Messages.app) on macOS
 
-I'll make some docs eventually. For now:
+-  [GODOC](https://godoc.org/golift.io/imessage)
 
 Use this library to send and receive messages using iMessage. I personally use it for
 various home automation applications. You can use it to make a chat bot or something

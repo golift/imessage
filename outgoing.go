@@ -2,12 +2,11 @@ package imessage
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"strings"
 	"time"
-
-	"github.com/pkg/errors"
 )
 
 // OSAScriptPath is the path to the osascript binary. macOS only.
@@ -50,7 +49,7 @@ func (m *Messages) RunAppleScript(id string, scripts []string, retry int) (succe
 	for _, s := range scripts {
 		arg = append(arg, "-e", s)
 	}
-	m.dLogf("[%v] AppleScript Command: %v", id, strings.Join(arg, " "))
+	m.DebugLog.Printf("[%v] AppleScript Command: %v", id, strings.Join(arg, " "))
 	for i := 1; i <= retry; i++ {
 		var out bytes.Buffer
 		cmd := exec.Command(arg[0], arg[1:]...)
@@ -60,11 +59,11 @@ func (m *Messages) RunAppleScript(id string, scripts []string, retry int) (succe
 			success = true
 			break
 		} else if i >= retry {
-			errs = append(errs, errors.Wrapf(errors.New(out.String()), "cmd.Run: %v", err.Error()))
+			errs = append(errs, fmt.Errorf("cmd.Run: %v: %v", err, out.String()))
 			return
 		} else {
 			errs = append(errs, err)
-			m.eLogf("[%v] (%v/%v) cmd.Run: %v: %v", id, i, retry, err, out.String())
+			m.ErrorLog.Printf("[%v] (%v/%v) cmd.Run: %v: %v", id, i, retry, err, out.String())
 		}
 		time.Sleep(750 * time.Millisecond)
 	}
@@ -109,13 +108,13 @@ func (m *Messages) processOutgoingMessages() {
 			// Give iMessage time to do its thing.
 			time.Sleep(300 * time.Millisecond)
 		case <-clearTicker:
-			if m.config.ClearMsgs && newMsg {
+			if m.ClearMsgs && newMsg {
 				newMsg = false
-				m.dLogf("Clearing Messages.app Conversations")
+				m.DebugLog.Print("Clearing Messages.app Conversations")
 				_ = m.checkErr(m.ClearMessages(), "clearing messages")
 				time.Sleep(time.Second)
 			}
-		case <-m.stopOutgoing:
+		case <-m.stopChan:
 			return
 		}
 	}

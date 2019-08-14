@@ -22,8 +22,8 @@ package main
 
 import (
 	"log"
+	"os"
 	"strings"
-	"time"
 
 	"golift.io/imessage"
 )
@@ -40,13 +40,13 @@ func main() {
 		SQLPath:   iChatDBLocation, // Set this correctly
 		QueueSize: 10,              // 10-20 is fine. If your server is super busy, tune this.
 		Retries:   3,               // run the applescript up to this many times to send a message. 3 works well.
+		DebugLog:  log.New(os.Stdout, "[DEBUG] ", log.LstdFlags), // Log debug messages.
+		ErrorLog:  log.New(os.Stderr, "[ERROR] ", log.LstdFlags), // Log errors.
 	}
 	s, err := imessage.Init(c)
 	checkErr(err)
 
 	done := make(chan imessage.Incoming) // Make a channel to receive incoming messages.
-	s.SetDebugLogger(log.Printf)         // Log debug messages.
-	s.SetErrorLogger(log.Printf)         // Log errors.
 	s.IncomingChan(".*", done)           // Bind to all incoming messages.
 	err = s.Start()                      // Start outgoing and incoming message go routines.
 	checkErr(err)

@@ -13,6 +13,8 @@ package imessage
 
 import (
 	"errors"
+	"io/ioutil"
+	"log"
 	"sync"
 	"time"
 
@@ -30,6 +32,8 @@ type Config struct {
 	Retries   int      `xml:"retries" json:"retries,_omitempty" toml:"retries,_omitempty" yaml:"retries"`
 	SQLPath   string   `xml:"sql_path" json:"sql_path,_omitempty" toml:"sql_path,_omitempty" yaml:"sql_path"`
 	Interval  Duration `xml:"interval" json:"interval,_omitempty" toml:"interval,_omitempty" yaml:"interval"`
+	ErrorLog  Logger   `xml:"-" json:"-" toml:"-" yaml:"-"`
+	DebugLog  Logger   `xml:"-" json:"-" toml:"-" yaml:"-"`
 }
 
 // Duration allows unmarshalling a time value from a config file.
@@ -47,54 +51,61 @@ func (d *Duration) UnmarshalText(data []byte) (err error) {
 // All of the important library methods are bound to this type.
 // ErrorLog and DebugLog can be set directly, or use the included methods to set them.
 type Messages struct {
-	config       *Config
-	ErrorLog     Logger
-	DebugLog     Logger
-	running      bool
-	startID      int64
-	outChan      chan Outgoing
-	inChan       chan Incoming
-	stopOutgoing chan bool
-	stopIncoming chan bool
-	db           *sqlite.Conn
-	dbLock       sync.Mutex
-	funcBinds    []*funcBinding
-	chanBinds    []*chanBinding
-	chanLock     sync.RWMutex
-	funcLock     sync.RWMutex
+	*Config
+	running   bool
+	currentID int64
+	outChan   chan Outgoing
+	inChan    chan Incoming
+	stopChan  chan bool
+	db        *sqlite.Conn
+	dbLock    sync.Mutex
+	binds     *binds
 }
 
-// Logger is a base type to deal with changing log outs.
+// Logger is a base interface to deal with changing log outs.
 // Pass a matching interface (like log.Printf) to capture
 // messages from the running background go routines.
-type Logger func(msg string, fmt ...interface{})
+type Logger interface {
+	Print(v ...interface{})
+	Printf(fmt string, v ...interface{})
+	Println(v ...interface{})
+}
 
 // Init is the primary function to retrieve a Message handler.
 // Pass a Config struct in and use the returned Messages struct to send
 // and respond to incoming messages.
-func Init(c *Config) (*Messages, error) {
+func Init(config *Config) (*Messages, error) {
 	m := &Messages{
-		config:       c,
-		outChan:      make(chan Outgoing, c.QueueSize),
-		inChan:       make(chan Incoming, c.QueueSize),
-		stopIncoming: make(chan bool),
-		stopOutgoing: make(chan bool),
+		Config:   config,
+		outChan:  make(chan Outgoing, config.QueueSize),
+		inChan:   make(chan Incoming, config.QueueSize),
+		stopChan: make(chan bool),
 	}
-	if c.Retries == 0 {
-		c.Retries = 1
-	} else if c.Retries > 10 {
-		c.Retries = 10
-	}
-	if c.SQLPath == "" {
+	m.setDefaults()
+	if m.SQLPath == "" {
 		return m, nil
-	}
-	if c.Interval.Duration == 0 {
-		c.Interval.Duration = DefaultDuration
-	} else if c.Interval.Duration > 10*time.Second {
-		c.Interval.Duration = 10 * time.Second
 	}
 	// Try to open, query and close the database.
 	return m, m.getCurrentID()
+}
+
+func (m *Messages) setDefaults() {
+	if m.Retries == 0 {
+		m.Retries = 1
+	} else if m.Retries > 10 {
+		m.Retries = 10
+	}
+	if m.Interval.Duration == 0 {
+		m.Interval.Duration = DefaultDuration
+	} else if m.Interval.Duration > 10*time.Second {
+		m.Interval.Duration = 10 * time.Second
+	}
+	if m.ErrorLog == nil {
+		m.ErrorLog = log.New(ioutil.Discard, "[ERROR] ", log.LstdFlags)
+	}
+	if m.DebugLog == nil {
+		m.DebugLog = log.New(ioutil.Discard, "[DEBUG] ", log.LstdFlags)
+	}
 }
 
 // Start starts the iMessage-sqlite3 db and outgoing message watcher routine(s).
@@ -106,7 +117,7 @@ func (m *Messages) Start() error {
 		return err
 	}
 	m.running = true
-	m.dLogf("starting with id %d", m.startID)
+	m.DebugLog.Printf("starting with id %d", m.currentID)
 	go m.processIncomingMessages()
 	go m.processOutgoingMessages()
 	return nil
@@ -118,36 +129,7 @@ func (m *Messages) Start() error {
 func (m *Messages) Stop() {
 	defer func() { m.running = false }()
 	if m.running {
-		m.stopOutgoing <- true
-		m.stopIncoming <- true
-	}
-}
-
-// SetDebugLogger allows a library consumer to do whatever they want with the debug logs from this package.
-// Pass in a Logger interface like log.Printf to capture messages created by the go routines.
-// The DebugLog struct item is exported and can also be set directly without a method call.
-func (m *Messages) SetDebugLogger(logger Logger) {
-	m.DebugLog = logger
-}
-
-// SetErrorLogger allows a library consumer to do whatever they want with the error logs from this package.
-// Pass in a Logger interface like log.Printf to capture messages created by the go routines.
-// The ErrorLog struct item is exported and can also be set directly without a method call.
-func (m *Messages) SetErrorLogger(logger Logger) {
-	m.ErrorLog = logger
-}
-
-// dLogf logs a debug message.
-func (m *Messages) dLogf(msg string, v ...interface{}) {
-	if m.DebugLog != nil {
-		m.DebugLog("[DEBUG] "+msg, v...)
-	}
-}
-
-// eLogf logs an error message.
-func (m *Messages) eLogf(msg string, v ...interface{}) {
-	if m.ErrorLog != nil {
-		m.ErrorLog("[ERROR] "+msg, v...)
+		m.stopChan <- true
 	}
 }
 
@@ -155,28 +137,28 @@ func (m *Messages) eLogf(msg string, v ...interface{}) {
 // access the db at once.
 func (m *Messages) getDB() error {
 	m.dbLock.Lock()
-	m.dLogf("opening database")
+	m.DebugLog.Print("opening database")
 	var err error
-	m.db, err = sqlite.OpenConn(m.config.SQLPath, 1)
+	m.db, err = sqlite.OpenConn(m.SQLPath, 1)
 	return m.checkErr(err, "opening database")
 }
 
 // closeDB stops reading the sqlite db and unlocks the read lock.
 func (m *Messages) closeDB() {
 	defer m.dbLock.Unlock()
-	m.dLogf("closing database")
+	m.DebugLog.Print("closing database")
 	if m.db != nil {
 		_ = m.checkErr(m.db.Close(), "closing database")
 		m.db = nil
 	} else {
-		m.dLogf("db was nil?")
+		m.DebugLog.Print("db was nil?")
 	}
 }
 
 // checkErr writes an error to Logger if it exists.
 func (m *Messages) checkErr(err error, msg string) error {
 	if err != nil {
-		m.eLogf("%s: %q\n", msg, err)
+		m.ErrorLog.Printf("%s: %q\n", msg, err)
 	}
 	return err
 }

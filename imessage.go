@@ -69,7 +69,7 @@ type Messages struct {
 // messages from the running background go routines.
 type Logger func(msg string, fmt ...interface{})
 
-// Init is the primary function to retreive a Message handler.
+// Init is the primary function to retrieve a Message handler.
 // Pass a Config struct in and use the returned Messages struct to send
 // and respond to incoming messages.
 func Init(c *Config) (*Messages, error) {
@@ -93,7 +93,7 @@ func Init(c *Config) (*Messages, error) {
 	} else if c.Interval.Duration > 10*time.Second {
 		c.Interval.Duration = 10 * time.Second
 	}
-	// Try to open, query and close the datbase.
+	// Try to open, query and close the database.
 	return m, m.getCurrentID()
 }
 
@@ -114,7 +114,7 @@ func (m *Messages) Start() error {
 
 // Stop cancels the iMessage-sqlite3 db and outgoing message watcher routine(s).
 // Outgoing messages stop working when the routines are stopped.
-// Incoming messages are ignored once this runs.
+// Incoming messages are ignored after this runs.
 func (m *Messages) Stop() {
 	defer func() { m.running = false }()
 	if m.running {

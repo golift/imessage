@@ -58,8 +58,8 @@ type Messages struct {
 	inChan    chan Incoming
 	stopChan  chan bool
 	db        *sqlite.Conn
-	dbLock    sync.Mutex
-	binds     *binds
+	sync.Mutex
+	*binds
 }
 
 // Logger is a base interface to deal with changing log outs.
@@ -136,19 +136,20 @@ func (m *Messages) Stop() {
 // getDB opens a database connection and locks access, so only one reader can
 // access the db at once.
 func (m *Messages) getDB() error {
-	m.dbLock.Lock()
+	m.Lock()
 	m.DebugLog.Print("opening database")
 	var err error
 	m.db, err = sqlite.OpenConn(m.SQLPath, 1)
-	return m.checkErr(err, "opening database")
+	m.checkErr(err, "opening database")
+	return err
 }
 
 // closeDB stops reading the sqlite db and unlocks the read lock.
 func (m *Messages) closeDB() {
-	defer m.dbLock.Unlock()
+	defer m.Unlock()
 	m.DebugLog.Print("closing database")
 	if m.db != nil {
-		_ = m.checkErr(m.db.Close(), "closing database")
+		m.checkErr(m.db.Close(), "closing database")
 		m.db = nil
 	} else {
 		m.DebugLog.Print("db was nil?")
@@ -156,9 +157,8 @@ func (m *Messages) closeDB() {
 }
 
 // checkErr writes an error to Logger if it exists.
-func (m *Messages) checkErr(err error, msg string) error {
+func (m *Messages) checkErr(err error, msg string) {
 	if err != nil {
 		m.ErrorLog.Printf("%s: %q\n", msg, err)
 	}
-	return err
 }

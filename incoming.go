@@ -49,7 +49,7 @@ type binds struct {
 func (m *Messages) IncomingChan(match string, channel chan Incoming) {
 	m.binds.Lock()
 	defer m.binds.Unlock()
-	m.binds.Chans = append(m.binds.Chans, &chanBinding{Match: match, Chan: channel})
+	m.Chans = append(m.Chans, &chanBinding{Match: match, Chan: channel})
 }
 
 // IncomingCall connects a callback function to a matched string in a message.
@@ -58,7 +58,7 @@ func (m *Messages) IncomingChan(match string, channel chan Incoming) {
 func (m *Messages) IncomingCall(match string, callback Callback) {
 	m.binds.Lock()
 	defer m.binds.Unlock()
-	m.binds.Funcs = append(m.binds.Funcs, &funcBinding{Match: match, Func: callback})
+	m.Funcs = append(m.Funcs, &funcBinding{Match: match, Func: callback})
 }
 
 // RemoveChan deletes a message match to channel made with IncomingChan()
@@ -66,10 +66,10 @@ func (m *Messages) RemoveChan(match string) int {
 	m.binds.Lock()
 	defer m.binds.Unlock()
 	removed := 0
-	for i, rlen := 0, len(m.binds.Chans); i < rlen; i++ {
+	for i, rlen := 0, len(m.Chans); i < rlen; i++ {
 		j := i - removed
-		if m.binds.Chans[j].Match == match {
-			m.binds.Chans = append(m.binds.Chans[:j], m.binds.Chans[j+1:]...)
+		if m.Chans[j].Match == match {
+			m.Chans = append(m.Chans[:j], m.Chans[j+1:]...)
 			removed++
 		}
 	}
@@ -81,10 +81,10 @@ func (m *Messages) RemoveCall(match string) int {
 	m.binds.Lock()
 	defer m.binds.Unlock()
 	removed := 0
-	for i, rlen := 0, len(m.binds.Funcs); i < rlen; i++ {
+	for i, rlen := 0, len(m.Funcs); i < rlen; i++ {
 		j := i - removed
-		if m.binds.Funcs[j].Match == match {
-			m.binds.Funcs = append(m.binds.Funcs[:j], m.binds.Funcs[j+1:]...)
+		if m.Funcs[j].Match == match {
+			m.Funcs = append(m.Funcs[:j], m.Funcs[j+1:]...)
 			removed++
 		}
 	}
@@ -97,6 +97,7 @@ func (m *Messages) processIncomingMessages() {
 		for {
 			select {
 			case msg := <-m.inChan:
+				m.DebugLog.Printf("new message id %d from: %s size: %d", msg.RowID, msg.From, len(msg.Text))
 				m.callBacks(msg)
 				m.mesgChans(msg)
 			case <-m.stopChan:
@@ -104,15 +105,16 @@ func (m *Messages) processIncomingMessages() {
 			}
 		}
 	}()
+
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
-		_ = m.checkErr(err, "fsnotify failed, polling instead")
+		m.ErrorLog.Printf("fsnotify failed, polling instead: %q\n", err)
 		go m.pollSQL()
 		return
 	}
 	go m.fsnotifySQL(watcher)
-	if err = watcher.Add(filepath.Dir(m.SQLPath)); err != nil {
-		_ = m.checkErr(err, "fsnotify watcher failed")
+	if err := watcher.Add(filepath.Dir(m.SQLPath)); err != nil {
+		m.ErrorLog.Printf("fsnotify watcher failed: %q\n", err)
 	}
 }
 
@@ -129,25 +131,27 @@ func (m *Messages) fsnotifySQL(watcher *fsnotify.Watcher) {
 				m.Stop()
 				return
 			}
-			if event.Op&fsnotify.Write == fsnotify.Write &&
-				last.Add(m.Interval.Duration).Before(time.Now()) {
-				m.DebugLog.Printf("modified file: %v", event.Name)
-				last = time.Now()
-				m.checkForNewMessages()
+			if event.Op&fsnotify.Write != fsnotify.Write || time.Now().Before(last.Add(m.Interval.Duration)) {
+				continue
 			}
+			m.DebugLog.Printf("modified file: %v", event.Name)
+			last = time.Now()
+			m.checkForNewMessages()
 		case err, ok := <-watcher.Errors:
 			if !ok {
 				m.ErrorLog.Print("fsnotify watcher errors failed. incoming message routines stopped.")
 				m.Stop()
 				return
 			}
-			_ = m.checkErr(err, "fsnotify watcher")
+			m.checkErr(err, "fsnotify watcher")
 		case <-m.stopChan:
 			return
 		}
 	}
 }
 
+// pollSQL is only used in fsnotify fails. I've never seen fsnotify fail.
+// This procedure likely never runs.
 func (m *Messages) pollSQL() {
 	ticker := time.NewTicker(m.Interval.Round(time.Second))
 	for {
@@ -170,25 +174,24 @@ func (m *Messages) checkForNewMessages() {
 		`WHERE is_from_me=0 AND message.rowid > $id ORDER BY message.date ASC`
 	query := m.db.Prep(sql)
 	query.SetInt64("$id", m.currentID)
-	defer func() {
-		_ = m.checkErr(query.Finalize(), sql)
-	}()
+	defer m.checkErr(query.Finalize(), sql)
+
 	for {
-		if hasRow, err := query.Step(); err != nil || !hasRow {
-			_ = m.checkErr(err, sql)
+		if hasRow, err := query.Step(); err != nil {
+			m.ErrorLog.Printf("%s: %q\n", sql, err)
+			return
+		} else if !hasRow {
 			return
 		}
+
+		// Update Current ID (for the next SELECT), and send this message to the processors.
 		m.currentID = query.GetInt64("rowid")
-		msg := Incoming{
+		m.inChan <- Incoming{
 			RowID: m.currentID,
 			From:  strings.TrimSpace(query.GetText("handle")),
 			Text:  strings.TrimSpace(query.GetText("text")),
+			File:  query.GetInt64("cache_has_attachments") == 1,
 		}
-		if query.GetInt64("cache_has_attachments") == 1 {
-			msg.File = true
-		}
-		m.inChan <- msg
-		m.DebugLog.Printf("new message id %d from: %s size: %d", msg.RowID, msg.From, len(msg.Text))
 	}
 }
 
@@ -199,39 +202,49 @@ func (m *Messages) getCurrentID() error {
 	}
 	defer m.closeDB()
 	query := m.db.Prep(sql)
-	defer func() {
-		_ = m.checkErr(query.Finalize(), sql)
-	}()
+	defer m.checkErr(query.Finalize(), sql)
+
 	m.DebugLog.Print("querying current id")
 	hasrow, err := query.Step()
-	_ = m.checkErr(err, sql)
-	if hasrow && err == nil {
-		m.currentID = query.GetInt64("id")
-		return nil
+	if err != nil {
+		m.ErrorLog.Printf("%s: %q\n", sql, err)
+		return err
 	}
-	return errors.New("no message rows found")
+	if !hasrow {
+		return errors.New("no message rows found")
+	}
+	m.currentID = query.GetInt64("id")
+	return nil
 }
 
 func (m *Messages) callBacks(msg Incoming) {
 	m.binds.RLock()
 	defer m.binds.RUnlock()
-	for _, bind := range m.binds.Funcs {
-		matched, err := regexp.MatchString(bind.Match, msg.Text)
-		if err = m.checkErr(err, bind.Match); err == nil && matched {
-			m.DebugLog.Printf("found matching message handler func: %v", bind.Match)
-			go bind.Func(msg)
+	for _, bind := range m.Funcs {
+		if matched, err := regexp.MatchString(bind.Match, msg.Text); err != nil {
+			m.ErrorLog.Printf("%s: %q\n", bind.Match, err)
+			continue
+		} else if !matched {
+			continue
 		}
+
+		m.DebugLog.Printf("found matching message handler func: %v", bind.Match)
+		go bind.Func(msg)
 	}
 }
 
 func (m *Messages) mesgChans(msg Incoming) {
 	m.binds.RLock()
 	defer m.binds.RUnlock()
-	for _, bind := range m.binds.Chans {
-		matched, err := regexp.MatchString(bind.Match, msg.Text)
-		if err = m.checkErr(err, bind.Match); err == nil && matched {
-			m.DebugLog.Printf("found matching message handler chan: %v", bind.Match)
-			bind.Chan <- msg
+	for _, bind := range m.Chans {
+		if matched, err := regexp.MatchString(bind.Match, msg.Text); err != nil {
+			m.ErrorLog.Printf("%s: %q\n", bind.Match, err)
+			continue
+		} else if !matched {
+			continue
 		}
+
+		m.DebugLog.Printf("found matching message handler chan: %v", bind.Match)
+		bind.Chan <- msg
 	}
 }

@@ -59,11 +59,11 @@ func (m *Messages) RunAppleScript(id string, scripts []string, retry int) (succe
 			success = true
 			break
 		} else if i >= retry {
-			errs = append(errs, fmt.Errorf("cmd.Run: %v: %v", err, out.String()))
+			errs = append(errs, fmt.Errorf("exec.Command: %v: %v", err, out.String()))
 			return
 		} else {
 			errs = append(errs, err)
-			m.ErrorLog.Printf("[%v] (%v/%v) cmd.Run: %v: %v", id, i, retry, err, out.String())
+			m.ErrorLog.Printf("[%v] (%v/%v) exec.Command: %v: %v", id, i, retry, err, out.String())
 		}
 		time.Sleep(750 * time.Millisecond)
 	}
@@ -111,7 +111,7 @@ func (m *Messages) processOutgoingMessages() {
 			if m.ClearMsgs && newMsg {
 				newMsg = false
 				m.DebugLog.Print("Clearing Messages.app Conversations")
-				_ = m.checkErr(m.ClearMessages(), "clearing messages")
+				m.checkErr(m.ClearMessages(), "clearing messages")
 				time.Sleep(time.Second)
 			}
 		case <-m.stopChan:

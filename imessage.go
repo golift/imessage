@@ -59,7 +59,7 @@ type Messages struct {
 	stopChan  chan bool
 	db        *sqlite.Conn
 	sync.Mutex
-	*binds
+	binds
 }
 
 // Logger is a base interface to deal with changing log outs.

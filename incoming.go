@@ -174,7 +174,6 @@ func (m *Messages) checkForNewMessages() {
 		`WHERE is_from_me=0 AND message.rowid > $id ORDER BY message.date ASC`
 	query := m.db.Prep(sql)
 	query.SetInt64("$id", m.currentID)
-	defer m.checkErr(query.Finalize(), sql)
 
 	for {
 		if hasRow, err := query.Step(); err != nil {
@@ -202,15 +201,13 @@ func (m *Messages) getCurrentID() error {
 	}
 	defer m.closeDB()
 	query := m.db.Prep(sql)
-	defer m.checkErr(query.Finalize(), sql)
 
 	m.DebugLog.Print("querying current id")
-	hasrow, err := query.Step()
-	if err != nil {
+
+	if hasrow, err := query.Step(); err != nil {
 		m.ErrorLog.Printf("%s: %q\n", sql, err)
 		return err
-	}
-	if !hasrow {
+	} else if !hasrow {
 		return errors.New("no message rows found")
 	}
 	m.currentID = query.GetInt64("id")

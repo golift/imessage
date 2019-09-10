@@ -57,7 +57,6 @@ type Messages struct {
 	outChan   chan Outgoing
 	inChan    chan Incoming
 	stopChan  chan bool
-	db        *sqlite.Conn
 	sync.Mutex
 	binds
 }
@@ -135,25 +134,23 @@ func (m *Messages) Stop() {
 
 // getDB opens a database connection and locks access, so only one reader can
 // access the db at once.
-func (m *Messages) getDB() error {
+func (m *Messages) getDB() (*sqlite.Conn, error) {
 	m.Lock()
 	m.DebugLog.Print("opening database")
-	var err error
-	m.db, err = sqlite.OpenConn(m.SQLPath, 1)
+	db, err := sqlite.OpenConn(m.SQLPath, sqlite.SQLITE_OPEN_READONLY)
 	m.checkErr(err, "opening database")
-	return err
+	return db, err
 }
 
 // closeDB stops reading the sqlite db and unlocks the read lock.
-func (m *Messages) closeDB() {
-	defer m.Unlock()
+func (m *Messages) closeDB(db *sqlite.Conn) {
 	m.DebugLog.Print("closing database")
-	if m.db != nil {
-		m.checkErr(m.db.Close(), "closing database")
-		m.db = nil
-	} else {
-		m.DebugLog.Print("db was nil?")
+	if db == nil {
+		m.DebugLog.Print("db was nil? not closed")
+		return
 	}
+	defer m.Unlock()
+	m.checkErr(db.Close(), "closing database")
 }
 
 // checkErr writes an error to Logger if it exists.

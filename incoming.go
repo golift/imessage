@@ -165,14 +165,18 @@ func (m *Messages) pollSQL() {
 }
 
 func (m *Messages) checkForNewMessages() {
-	if m.getDB() != nil {
+	db, err := m.getDB()
+	if err != nil || db == nil {
 		return // error
 	}
-	defer m.closeDB()
+	defer m.closeDB(db)
 	sql := `SELECT message.rowid as rowid, handle.id as handle, cache_has_attachments, message.text as text ` +
 		`FROM message INNER JOIN handle ON message.handle_id = handle.ROWID ` +
 		`WHERE is_from_me=0 AND message.rowid > $id ORDER BY message.date ASC`
-	query := m.db.Prep(sql)
+	query, _, err := db.PrepareTransient(sql)
+	if err != nil {
+		return
+	}
 	query.SetInt64("$id", m.currentID)
 
 	for {
@@ -180,6 +184,7 @@ func (m *Messages) checkForNewMessages() {
 			m.ErrorLog.Printf("%s: %q\n", sql, err)
 			return
 		} else if !hasRow {
+			m.checkErr(query.Finalize(), "query reset")
 			return
 		}
 
@@ -196,22 +201,26 @@ func (m *Messages) checkForNewMessages() {
 
 func (m *Messages) getCurrentID() error {
 	sql := `SELECT MAX(rowid) AS id FROM message`
-	if err := m.getDB(); err != nil {
+	db, err := m.getDB()
+	if err != nil {
 		return err
 	}
-	defer m.closeDB()
-	query := m.db.Prep(sql)
+	defer m.closeDB(db)
+	query, _, err := db.PrepareTransient(sql)
+	if err != nil {
+		return err
+	}
 
 	m.DebugLog.Print("querying current id")
-
 	if hasrow, err := query.Step(); err != nil {
 		m.ErrorLog.Printf("%s: %q\n", sql, err)
 		return err
 	} else if !hasrow {
+		_ = query.Finalize()
 		return errors.New("no message rows found")
 	}
 	m.currentID = query.GetInt64("id")
-	return nil
+	return query.Finalize()
 }
 
 func (m *Messages) callBacks(msg Incoming) {

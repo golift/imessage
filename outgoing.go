@@ -106,7 +106,9 @@ func (m *Messages) processOutgoingMessages() {
 				go msg.Call(&Response{ID: msg.ID, To: msg.To, Text: msg.Text, Errs: err, Sent: success})
 			}
 			// Give iMessage time to do its thing.
-			time.Sleep(300 * time.Millisecond)
+			if msg.File {
+				time.Sleep(250 * time.Millisecond)
+			}
 		case <-clearTicker:
 			if m.ClearMsgs && newMsg {
 				newMsg = false

@@ -92,51 +92,41 @@ func (m *Messages) RemoveCall(match string) int {
 }
 
 // processIncomingMessages starts the iMessage-sqlite3 db watcher routine(s).
-func (m *Messages) processIncomingMessages() {
-	go func() {
-		for {
-			select {
-			case msg := <-m.inChan:
-				m.DebugLog.Printf("new message id %d from: %s size: %d", msg.RowID, msg.From, len(msg.Text))
-				m.callBacks(msg)
-				m.mesgChans(msg)
-			case <-m.stopChan:
-				return
-			}
-		}
-	}()
-
+func (m *Messages) processIncomingMessages() error {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
-		m.ErrorLog.Printf("fsnotify failed, polling instead: %q\n", err)
-		go m.pollSQL()
-		return
+		return err
 	}
-	go m.fsnotifySQL(watcher)
-	if err := watcher.Add(filepath.Dir(m.SQLPath)); err != nil {
-		m.ErrorLog.Printf("fsnotify watcher failed: %q\n", err)
-	}
+	go func() {
+		defer func() {
+			_ = watcher.Close()
+		}()
+		m.fsnotifySQL(watcher, time.NewTicker(150*time.Millisecond))
+	}()
+	return watcher.Add(filepath.Dir(m.SQLPath))
 }
 
-func (m *Messages) fsnotifySQL(watcher *fsnotify.Watcher) {
-	var last time.Time
-	defer func() {
-		_ = watcher.Close()
-	}()
-	for {
+func (m *Messages) fsnotifySQL(watcher *fsnotify.Watcher, ticker *time.Ticker) {
+	for checkDB := false; ; {
 		select {
+		case msg := <-m.inChan:
+			m.DebugLog.Printf("new message id %d from: %s size: %d", msg.RowID, msg.From, len(msg.Text))
+			m.callBacks(msg)
+			m.mesgChans(msg)
+
+		case <-ticker.C:
+			if checkDB {
+				m.checkForNewMessages()
+			}
+
 		case event, ok := <-watcher.Events:
 			if !ok {
 				m.ErrorLog.Print("fsnotify watcher failed. incoming message routines stopped")
 				m.Stop()
 				return
 			}
-			if event.Op&fsnotify.Write != fsnotify.Write || time.Now().Before(last.Add(m.Interval.Duration)) {
-				continue
-			}
-			m.DebugLog.Printf("modified file: %v", event.Name)
-			last = time.Now()
-			m.checkForNewMessages()
+			checkDB = event.Op&fsnotify.Write == fsnotify.Write
+
 		case err, ok := <-watcher.Errors:
 			if !ok {
 				m.ErrorLog.Print("fsnotify watcher errors failed. incoming message routines stopped.")
@@ -144,20 +134,6 @@ func (m *Messages) fsnotifySQL(watcher *fsnotify.Watcher) {
 				return
 			}
 			m.checkErr(err, "fsnotify watcher")
-		case <-m.stopChan:
-			return
-		}
-	}
-}
-
-// pollSQL is only used in fsnotify fails. I've never seen fsnotify fail.
-// This procedure likely never runs.
-func (m *Messages) pollSQL() {
-	ticker := time.NewTicker(m.Interval.Round(time.Second))
-	for {
-		select {
-		case <-ticker.C:
-			m.checkForNewMessages()
 		case <-m.stopChan:
 			return
 		}

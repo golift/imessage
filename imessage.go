@@ -27,24 +27,12 @@ var DefaultDuration = 250 * time.Millisecond
 // Config is our input data, data store, and interface to methods.
 // Fill out this struct and pass it into imessage.Init()
 type Config struct {
-	ClearMsgs bool     `xml:"clear_messages" json:"clear_messages,_omitempty" toml:"clear_messages,_omitempty" yaml:"clear_messages"`
-	QueueSize int      `xml:"queue_size" json:"queue_size,_omitempty" toml:"queue_size,_omitempty" yaml:"queue_size"`
-	Retries   int      `xml:"retries" json:"retries,_omitempty" toml:"retries,_omitempty" yaml:"retries"`
-	SQLPath   string   `xml:"sql_path" json:"sql_path,_omitempty" toml:"sql_path,_omitempty" yaml:"sql_path"`
-	Interval  Duration `xml:"interval" json:"interval,_omitempty" toml:"interval,_omitempty" yaml:"interval"`
-	ErrorLog  Logger   `xml:"-" json:"-" toml:"-" yaml:"-"`
-	DebugLog  Logger   `xml:"-" json:"-" toml:"-" yaml:"-"`
-}
-
-// Duration allows unmarshalling a time value from a config file.
-type Duration struct {
-	time.Duration
-}
-
-// UnmarshalText parses a duration type from a config file.
-func (d *Duration) UnmarshalText(data []byte) (err error) {
-	d.Duration, err = time.ParseDuration(string(data))
-	return
+	ClearMsgs bool   `xml:"clear_messages" json:"clear_messages,_omitempty" toml:"clear_messages,_omitempty" yaml:"clear_messages"`
+	QueueSize int    `xml:"queue_size" json:"queue_size,_omitempty" toml:"queue_size,_omitempty" yaml:"queue_size"`
+	Retries   int    `xml:"retries" json:"retries,_omitempty" toml:"retries,_omitempty" yaml:"retries"`
+	SQLPath   string `xml:"sql_path" json:"sql_path,_omitempty" toml:"sql_path,_omitempty" yaml:"sql_path"`
+	ErrorLog  Logger `xml:"-" json:"-" toml:"-" yaml:"-"`
+	DebugLog  Logger `xml:"-" json:"-" toml:"-" yaml:"-"`
 }
 
 // Messages is the interface into this module. Init() returns this struct.
@@ -80,8 +68,7 @@ func Init(config *Config) (*Messages, error) {
 		inChan:   make(chan Incoming, config.QueueSize),
 		stopChan: make(chan bool),
 	}
-	m.setDefaults()
-	if m.SQLPath == "" {
+	if m.setDefaults(); m.SQLPath == "" {
 		return m, nil
 	}
 	// Try to open, query and close the database.
@@ -93,11 +80,6 @@ func (m *Messages) setDefaults() {
 		m.Retries = 1
 	} else if m.Retries > 10 {
 		m.Retries = 10
-	}
-	if m.Interval.Duration == 0 {
-		m.Interval.Duration = DefaultDuration
-	} else if m.Interval.Duration > 10*time.Second {
-		m.Interval.Duration = 10 * time.Second
 	}
 	if m.ErrorLog == nil {
 		m.ErrorLog = log.New(ioutil.Discard, "[ERROR] ", log.LstdFlags)
@@ -117,9 +99,8 @@ func (m *Messages) Start() error {
 	}
 	m.running = true
 	m.DebugLog.Printf("starting with id %d", m.currentID)
-	go m.processIncomingMessages()
 	go m.processOutgoingMessages()
-	return nil
+	return m.processIncomingMessages()
 }
 
 // Stop cancels the iMessage-sqlite3 db and outgoing message watcher routine(s).
@@ -128,7 +109,7 @@ func (m *Messages) Start() error {
 func (m *Messages) Stop() {
 	defer func() { m.running = false }()
 	if m.running {
-		m.stopChan <- true
+		close(m.stopChan)
 	}
 }
 
@@ -136,7 +117,7 @@ func (m *Messages) Stop() {
 // access the db at once.
 func (m *Messages) getDB() (*sqlite.Conn, error) {
 	m.Lock()
-	m.DebugLog.Print("opening database")
+	m.DebugLog.Println("opening database:", m.SQLPath)
 	db, err := sqlite.OpenConn(m.SQLPath, sqlite.SQLITE_OPEN_READONLY)
 	m.checkErr(err, "opening database")
 	return db, err
@@ -144,13 +125,13 @@ func (m *Messages) getDB() (*sqlite.Conn, error) {
 
 // closeDB stops reading the sqlite db and unlocks the read lock.
 func (m *Messages) closeDB(db *sqlite.Conn) {
-	m.DebugLog.Print("closing database")
+	m.DebugLog.Println("closing database:", m.SQLPath)
 	if db == nil {
 		m.DebugLog.Print("db was nil? not closed")
 		return
 	}
 	defer m.Unlock()
-	m.checkErr(db.Close(), "closing database")
+	m.checkErr(db.Close(), "closing database: "+m.SQLPath)
 }
 
 // checkErr writes an error to Logger if it exists.

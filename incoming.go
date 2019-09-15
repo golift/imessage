@@ -11,6 +11,9 @@ import (
 	"github.com/fsnotify/fsnotify"
 )
 
+// DefaultDuration is the minimum interval that must pass before opening the database again.
+var DefaultDuration = 150 * time.Millisecond
+
 // Incoming is represents a message from someone. This struct is filled out
 // and sent to incoming callback methods and/or to bound channels.
 type Incoming struct {
@@ -98,10 +101,8 @@ func (m *Messages) processIncomingMessages() error {
 		return err
 	}
 	go func() {
-		defer func() {
-			_ = watcher.Close()
-		}()
-		m.fsnotifySQL(watcher, time.NewTicker(150*time.Millisecond))
+		m.fsnotifySQL(watcher, time.NewTicker(DefaultDuration))
+		_ = watcher.Close()
 	}()
 	return watcher.Add(filepath.Dir(m.SQLPath))
 }
@@ -109,7 +110,10 @@ func (m *Messages) processIncomingMessages() error {
 func (m *Messages) fsnotifySQL(watcher *fsnotify.Watcher, ticker *time.Ticker) {
 	for checkDB := false; ; {
 		select {
-		case msg := <-m.inChan:
+		case msg, ok := <-m.inChan:
+			if !ok {
+				return
+			}
 			m.DebugLog.Printf("new message id %d from: %s size: %d", msg.RowID, msg.From, len(msg.Text))
 			m.callBacks(msg)
 			m.mesgChans(msg)
@@ -121,7 +125,7 @@ func (m *Messages) fsnotifySQL(watcher *fsnotify.Watcher, ticker *time.Ticker) {
 
 		case event, ok := <-watcher.Events:
 			if !ok {
-				m.ErrorLog.Print("fsnotify watcher failed. incoming message routines stopped")
+				m.ErrorLog.Print("fsnotify watcher failed. message routines stopped")
 				m.Stop()
 				return
 			}
@@ -129,13 +133,11 @@ func (m *Messages) fsnotifySQL(watcher *fsnotify.Watcher, ticker *time.Ticker) {
 
 		case err, ok := <-watcher.Errors:
 			if !ok {
-				m.ErrorLog.Print("fsnotify watcher errors failed. incoming message routines stopped.")
+				m.ErrorLog.Print("fsnotify watcher errors failed. message routines stopped.")
 				m.Stop()
 				return
 			}
 			m.checkErr(err, "fsnotify watcher")
-		case <-m.stopChan:
-			return
 		}
 	}
 }

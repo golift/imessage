@@ -13,16 +13,14 @@ package imessage
 
 import (
 	"errors"
+	"fmt"
 	"io/ioutil"
 	"log"
+	"os"
 	"sync"
-	"time"
 
 	"crawshaw.io/sqlite"
 )
-
-// DefaultDuration is the minimum interval that must pass before opening the database again.
-var DefaultDuration = 250 * time.Millisecond
 
 // Config is our input data, data store, and interface to methods.
 // Fill out this struct and pass it into imessage.Init()
@@ -44,7 +42,6 @@ type Messages struct {
 	currentID int64
 	outChan   chan Outgoing
 	inChan    chan Incoming
-	stopChan  chan bool
 	sync.Mutex
 	binds
 }
@@ -62,30 +59,33 @@ type Logger interface {
 // Pass a Config struct in and use the returned Messages struct to send
 // and respond to incoming messages.
 func Init(config *Config) (*Messages, error) {
-	m := &Messages{
-		Config:   config,
-		outChan:  make(chan Outgoing, config.QueueSize),
-		inChan:   make(chan Incoming, config.QueueSize),
-		stopChan: make(chan bool),
+	if _, err := os.Stat(config.SQLPath); err != nil {
+		return nil, fmt.Errorf("sql file access error: %v", err)
 	}
-	if m.setDefaults(); m.SQLPath == "" {
-		return m, nil
+	config.setDefaults()
+	m := &Messages{
+		Config:  config,
+		outChan: make(chan Outgoing, config.QueueSize),
+		inChan:  make(chan Incoming, config.QueueSize),
 	}
 	// Try to open, query and close the database.
 	return m, m.getCurrentID()
 }
 
-func (m *Messages) setDefaults() {
-	if m.Retries == 0 {
-		m.Retries = 1
-	} else if m.Retries > 10 {
-		m.Retries = 10
+func (c *Config) setDefaults() {
+	if c.Retries == 0 {
+		c.Retries = 3
+	} else if c.Retries > 10 {
+		c.Retries = 10
 	}
-	if m.ErrorLog == nil {
-		m.ErrorLog = log.New(ioutil.Discard, "[ERROR] ", log.LstdFlags)
+	if c.QueueSize < 10 {
+		c.QueueSize = 10
 	}
-	if m.DebugLog == nil {
-		m.DebugLog = log.New(ioutil.Discard, "[DEBUG] ", log.LstdFlags)
+	if c.ErrorLog == nil {
+		c.ErrorLog = log.New(ioutil.Discard, "[ERROR] ", log.LstdFlags)
+	}
+	if c.DebugLog == nil {
+		c.DebugLog = log.New(ioutil.Discard, "[DEBUG] ", log.LstdFlags)
 	}
 }
 
@@ -109,7 +109,8 @@ func (m *Messages) Start() error {
 func (m *Messages) Stop() {
 	defer func() { m.running = false }()
 	if m.running {
-		close(m.stopChan)
+		close(m.inChan)
+		close(m.outChan)
 	}
 }
 

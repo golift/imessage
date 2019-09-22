@@ -17,7 +17,6 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
-	"sync"
 
 	"crawshaw.io/sqlite"
 )
@@ -25,25 +24,31 @@ import (
 // Config is our input data, data store, and interface to methods.
 // Fill out this struct and pass it into imessage.Init()
 type Config struct {
-	ClearMsgs bool   `xml:"clear_messages" json:"clear_messages,_omitempty" toml:"clear_messages,_omitempty" yaml:"clear_messages"`
-	QueueSize int    `xml:"queue_size" json:"queue_size,_omitempty" toml:"queue_size,_omitempty" yaml:"queue_size"`
-	Retries   int    `xml:"retries" json:"retries,_omitempty" toml:"retries,_omitempty" yaml:"retries"`
-	SQLPath   string `xml:"sql_path" json:"sql_path,_omitempty" toml:"sql_path,_omitempty" yaml:"sql_path"`
-	ErrorLog  Logger `xml:"-" json:"-" toml:"-" yaml:"-"`
-	DebugLog  Logger `xml:"-" json:"-" toml:"-" yaml:"-"`
+	// ClearMsgs will cause this library to clear all iMessage conversations.
+	ClearMsgs bool `xml:"clear_messages" json:"clear_messages,_omitempty" toml:"clear_messages,_omitempty" yaml:"clear_messages"`
+	// This is the channel buffer size.
+	QueueSize int `xml:"queue_size" json:"queue_size,_omitempty" toml:"queue_size,_omitempty" yaml:"queue_size"`
+	// How many applescript retries to perform.
+	Retries int `xml:"retries" json:"retries,_omitempty" toml:"retries,_omitempty" yaml:"retries"`
+	// Timeout in seconds for AppleScript Exec commands.
+	Timeout int `xml:"timeout" json:"timeout,_omitempty" toml:"timeout,_omitempty" yaml:"timeout"`
+	// SQLPath is the location if the iMessage database.
+	SQLPath string `xml:"sql_path" json:"sql_path,_omitempty" toml:"sql_path,_omitempty" yaml:"sql_path"`
+	// Loggers.
+	ErrorLog Logger `xml:"-" json:"-" toml:"-" yaml:"-"`
+	DebugLog Logger `xml:"-" json:"-" toml:"-" yaml:"-"`
 }
 
 // Messages is the interface into this module. Init() returns this struct.
 // All of the important library methods are bound to this type.
 // ErrorLog and DebugLog can be set directly, or use the included methods to set them.
 type Messages struct {
-	*Config
-	running   bool
-	currentID int64
-	outChan   chan Outgoing
-	inChan    chan Incoming
-	sync.Mutex
-	binds
+	*Config                 // Input config.
+	running   bool          // Only used in Start() and Stop()
+	currentID int64         // Constantly growing
+	outChan   chan Outgoing // send
+	inChan    chan Incoming // recieve
+	binds                   // incoming message handlers
 }
 
 // Logger is a base interface to deal with changing log outs.
@@ -80,6 +85,9 @@ func (c *Config) setDefaults() {
 	}
 	if c.QueueSize < 10 {
 		c.QueueSize = 10
+	}
+	if c.Timeout < 10 {
+		c.Timeout = 10
 	}
 	if c.ErrorLog == nil {
 		c.ErrorLog = log.New(ioutil.Discard, "[ERROR] ", log.LstdFlags)

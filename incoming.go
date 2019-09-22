@@ -12,7 +12,7 @@ import (
 )
 
 // DefaultDuration is the minimum interval that must pass before opening the database again.
-var DefaultDuration = 150 * time.Millisecond
+var DefaultDuration = 200 * time.Millisecond
 
 // Incoming is represents a message from someone. This struct is filled out
 // and sent to incoming callback methods and/or to bound channels.
@@ -114,9 +114,7 @@ func (m *Messages) fsnotifySQL(watcher *fsnotify.Watcher, ticker *time.Ticker) {
 			if !ok {
 				return
 			}
-			m.DebugLog.Printf("new message id %d from: %s size: %d", msg.RowID, msg.From, len(msg.Text))
-			m.callBacks(msg)
-			m.mesgChans(msg)
+			m.handleIncoming(msg)
 
 		case <-ticker.C:
 			if checkDB {
@@ -177,6 +175,7 @@ func (m *Messages) checkForNewMessages() {
 	}
 }
 
+// getCurrentID opens the iMessage DB and gets the last written / current ID.
 func (m *Messages) getCurrentID() error {
 	sql := `SELECT MAX(rowid) AS id FROM message`
 	db, err := m.getDB()
@@ -201,9 +200,12 @@ func (m *Messages) getCurrentID() error {
 	return query.Finalize()
 }
 
-func (m *Messages) callBacks(msg Incoming) {
+// handleIncoming runs the call back funcs and notifies the call back channels.
+func (m *Messages) handleIncoming(msg Incoming) {
+	m.DebugLog.Printf("new message id %d from: %s size: %d", msg.RowID, msg.From, len(msg.Text))
 	m.binds.RLock()
 	defer m.binds.RUnlock()
+	// Handle call back functions.
 	for _, bind := range m.Funcs {
 		if matched, err := regexp.MatchString(bind.Match, msg.Text); err != nil {
 			m.ErrorLog.Printf("%s: %q\n", bind.Match, err)
@@ -215,11 +217,7 @@ func (m *Messages) callBacks(msg Incoming) {
 		m.DebugLog.Printf("found matching message handler func: %v", bind.Match)
 		go bind.Func(msg)
 	}
-}
-
-func (m *Messages) mesgChans(msg Incoming) {
-	m.binds.RLock()
-	defer m.binds.RUnlock()
+	// Handle call back channels.
 	for _, bind := range m.Chans {
 		if matched, err := regexp.MatchString(bind.Match, msg.Text); err != nil {
 			m.ErrorLog.Printf("%s: %q\n", bind.Match, err)

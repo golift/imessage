@@ -2,6 +2,7 @@ package imessage
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -33,7 +34,7 @@ type Response struct {
 	Errs []error
 }
 
-// Send is the method used to send an iMessage.
+// Send is the method used to send an iMessage. Thread/routine safe.
 // The messages are queued in a channel and sent 1 at a time with a small
 // delay between. Each message may have a callback attached that is kicked
 // off in a go routine after the message is sent.
@@ -44,28 +45,30 @@ func (m *Messages) Send(msg Outgoing) {
 // RunAppleScript runs a script on the local system. While not directly related to
 // iMessage and Messages.app, this library uses AppleScript to send messages using
 // imessage. To that end, the method to run scripts is also exposed for convenience.
-func (m *Messages) RunAppleScript(id string, scripts []string) (success bool, errs []error) {
+func (m *Messages) RunAppleScript(scripts []string) (success bool, errs []error) {
 	arg := []string{OSAScriptPath}
 	for _, s := range scripts {
 		arg = append(arg, "-e", s)
 	}
-	m.DebugLog.Printf("[%v] AppleScript Command: %v", id, strings.Join(arg, " "))
-	for i := 1; i <= m.Config.Retries; i++ {
+	m.DebugLog.Printf("AppleScript Command: %v", strings.Join(arg, " "))
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(m.Config.Timeout)*time.Second)
+	defer cancel()
+
+	for i := 1; i <= m.Config.Retries && !success; i++ {
+		if i > 1 {
+			// we had an error, don't be so quick to try again.
+			time.Sleep(500 * time.Millisecond)
+		}
 		var out bytes.Buffer
-		cmd := exec.Command(arg[0], arg[1:]...)
+		cmd := exec.CommandContext(ctx, arg[0], arg[1:]...)
 		cmd.Stdout = &out
 		cmd.Stderr = &out
-		if err := cmd.Run(); err == nil {
-			success = true
-			break
-		} else if i >= m.Config.Retries {
-			errs = append(errs, fmt.Errorf("exec.Command: %v: %v", err, out.String()))
-			return
-		} else {
-			errs = append(errs, err)
-			m.ErrorLog.Printf("[%v] (%v/%v) exec.Command: %v: %v", id, i, m.Config.Retries, err, out.String())
+
+		if err := cmd.Run(); err != nil {
+			errs = append(errs, fmt.Errorf("exec: %v: %v", err, out.String()))
+			continue
 		}
-		time.Sleep(500 * time.Millisecond)
+		success = true
 	}
 	return
 }
@@ -86,28 +89,30 @@ func (m *Messages) ClearMessages() error {
 	close every window
 end tell
 `
-	if success, err := m.RunAppleScript("wipe", []string{arg}); !success && err != nil {
+	if sent, err := m.RunAppleScript([]string{arg}); !sent && err != nil {
 		return err[0]
 	}
-	time.Sleep(time.Second)
+	time.Sleep(100 * time.Millisecond)
 	return nil
 }
 
 // processOutgoingMessages keeps an eye out for outgoing messages; then processes them.
 func (m *Messages) processOutgoingMessages() {
-	clearTicker := time.NewTicker(2 * time.Minute).C
-	for newMsg := true; ; {
+	clearTicker := time.NewTicker(2 * time.Minute)
+	defer clearTicker.Stop()
+	newMsg := true
+	for {
 		select {
 		case msg, ok := <-m.outChan:
 			if !ok {
 				return
 			}
 			newMsg = true
-			success, err := m.sendiMessage(msg)
+			response := m.sendiMessage(msg)
 			if msg.Call != nil {
-				go msg.Call(&Response{ID: msg.ID, To: msg.To, Text: msg.Text, Errs: err, Sent: success})
+				go msg.Call(response)
 			}
-		case <-clearTicker:
+		case <-clearTicker.C:
 			if m.ClearMsgs && newMsg {
 				newMsg = false
 				m.DebugLog.Print("Clearing Messages.app Conversations")
@@ -118,7 +123,7 @@ func (m *Messages) processOutgoingMessages() {
 }
 
 // sendiMessage runs the applesripts to send a message and close the iMessage windows.
-func (m *Messages) sendiMessage(msg Outgoing) (bool, []error) {
+func (m *Messages) sendiMessage(msg Outgoing) *Response {
 	arg := []string{`tell application "Messages" to send "` + msg.Text + `" to buddy "` + msg.To +
 		`" of (1st service whose service type = iMessage)`}
 	if _, err := os.Stat(msg.Text); err == nil && msg.File {
@@ -126,8 +131,8 @@ func (m *Messages) sendiMessage(msg Outgoing) (bool, []error) {
 			`" of (1st service whose service type = iMessage)`}
 	}
 	arg = append(arg, `tell application "Messages" to close every window`)
-	success, errs := m.RunAppleScript(msg.ID, arg)
+	sent, errs := m.RunAppleScript(arg)
 	// Messages can go out so quickly we need to sleep a bit to avoid sending duplicates.
 	time.Sleep(100 * time.Millisecond)
-	return success, errs
+	return &Response{ID: msg.ID, To: msg.To, Text: msg.Text, Errs: errs, Sent: sent}
 }

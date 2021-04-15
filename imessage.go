@@ -14,6 +14,7 @@ package imessage
 import (
 	"errors"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"os"
@@ -133,7 +134,7 @@ func (m *Messages) getDB() (*sqlite.Conn, error) {
 }
 
 // closeDB stops reading the sqlite db and unlocks the read lock.
-func (m *Messages) closeDB(db *sqlite.Conn) {
+func (m *Messages) closeDB(db io.Closer) {
 	m.DebugLog.Println("closing database:", m.SQLPath)
 	if db == nil {
 		m.DebugLog.Print("db was nil? not closed")

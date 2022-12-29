@@ -1,0 +1,32 @@
+name: test-and-lint
+on:
+  pull_request:
+    branches:
+    - main
+permissions:
+  contents: read
+jobs:
+  # Runs `go test` against 3 operating systems.
+  # gotest:
+  #   runs-on: macos-latest
+  #   steps:
+  #     - uses: actions/checkout@v3.2.0
+  #     - uses: actions/setup-go@v3
+  #       with:
+  #         go-version: 1.19
+  #     - name: go-test
+  #       run: 	go test -race -covermode=atomic ./...
+
+  # Runs golangci-lint on macos against freebsd and macos.
+  golangci-darwin:
+    name: golangci-lint
+    runs-on: macos-latest
+    steps:
+      - uses: actions/setup-go@v3
+        with:
+          go-version: 1.19
+      - uses: actions/checkout@v3
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v3
+        with:
+          version: v1.50

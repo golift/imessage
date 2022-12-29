@@ -1,7 +1,7 @@
 package imessage
 
 import (
-	"errors"
+	"fmt"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -12,7 +12,9 @@ import (
 )
 
 // DefaultDuration is the minimum interval that must pass before opening the database again.
-var DefaultDuration = 200 * time.Millisecond
+const DefaultDuration = 200 * time.Millisecond
+
+var ErrNoRows = fmt.Errorf("no message rows found")
 
 // Incoming is represents a message from someone. This struct is filled out
 // and sent to incoming callback methods and/or to bound channels.
@@ -52,6 +54,7 @@ type binds struct {
 func (m *Messages) IncomingChan(match string, channel chan Incoming) {
 	m.binds.Lock()
 	defer m.binds.Unlock()
+
 	m.Chans = append(m.Chans, &chanBinding{Match: match, Chan: channel})
 }
 
@@ -61,49 +64,62 @@ func (m *Messages) IncomingChan(match string, channel chan Incoming) {
 func (m *Messages) IncomingCall(match string, callback Callback) {
 	m.binds.Lock()
 	defer m.binds.Unlock()
+
 	m.Funcs = append(m.Funcs, &funcBinding{Match: match, Func: callback})
 }
 
-// RemoveChan deletes a message match to channel made with IncomingChan()
+// RemoveChan deletes a message match to channel made with IncomingChan().
 func (m *Messages) RemoveChan(match string) int {
 	m.binds.Lock()
 	defer m.binds.Unlock()
+
 	removed := 0
+
 	for i, rlen := 0, len(m.Chans); i < rlen; i++ {
 		j := i - removed
+
 		if m.Chans[j].Match == match {
 			m.Chans = append(m.Chans[:j], m.Chans[j+1:]...)
 			removed++
 		}
 	}
+
 	return removed
 }
 
-// RemoveCall deletes a message match to function callback made with IncomingCall()
+// RemoveCall deletes a message match to function callback made with IncomingCall().
 func (m *Messages) RemoveCall(match string) int {
 	m.binds.Lock()
 	defer m.binds.Unlock()
+
 	removed := 0
+
 	for i, rlen := 0, len(m.Funcs); i < rlen; i++ {
 		j := i - removed
+
 		if m.Funcs[j].Match == match {
 			m.Funcs = append(m.Funcs[:j], m.Funcs[j+1:]...)
 			removed++
 		}
 	}
+
 	return removed
 }
 
 // processIncomingMessages starts the iMessage-sqlite3 db watcher routine(s).
+//
+//nolint:wrapcheck
 func (m *Messages) processIncomingMessages() error {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		return err
 	}
+
 	go func() {
 		m.fsnotifySQL(watcher, time.NewTicker(DefaultDuration))
 		_ = watcher.Close()
 	}()
+
 	return watcher.Add(filepath.Dir(m.SQLPath))
 }
 
@@ -114,45 +130,51 @@ func (m *Messages) fsnotifySQL(watcher *fsnotify.Watcher, ticker *time.Ticker) {
 			if !ok {
 				return
 			}
-			m.handleIncoming(msg)
 
+			m.handleIncoming(msg)
 		case <-ticker.C:
 			if checkDB {
 				m.checkForNewMessages()
 			}
-
 		case event, ok := <-watcher.Events:
 			if !ok {
 				m.ErrorLog.Print("fsnotify watcher failed. message routines stopped")
 				m.Stop()
+
 				return
 			}
-			checkDB = event.Op&fsnotify.Write == fsnotify.Write
 
+			checkDB = event.Op&fsnotify.Write == fsnotify.Write
 		case err, ok := <-watcher.Errors:
 			if !ok {
 				m.ErrorLog.Print("fsnotify watcher errors failed. message routines stopped.")
 				m.Stop()
+
 				return
 			}
+
 			m.checkErr(err, "fsnotify watcher")
 		}
 	}
 }
 
 func (m *Messages) checkForNewMessages() {
-	db, err := m.getDB()
-	if err != nil || db == nil {
+	dbase, err := m.getDB()
+	if err != nil || dbase == nil {
 		return // error
 	}
-	defer m.closeDB(db)
+
+	defer m.closeDB(dbase)
+
 	sql := `SELECT message.rowid as rowid, handle.id as handle, cache_has_attachments, message.text as text ` +
 		`FROM message INNER JOIN handle ON message.handle_id = handle.ROWID ` +
 		`WHERE is_from_me=0 AND message.rowid > $id ORDER BY message.date ASC`
-	query, _, err := db.PrepareTransient(sql)
+
+	query, _, err := dbase.PrepareTransient(sql)
 	if err != nil {
 		return
 	}
+
 	query.SetInt64("$id", m.currentID)
 
 	for {
@@ -176,35 +198,45 @@ func (m *Messages) checkForNewMessages() {
 }
 
 // getCurrentID opens the iMessage DB and gets the last written / current ID.
+//
+//nolint:wrapcheck
 func (m *Messages) getCurrentID() error {
 	sql := `SELECT MAX(rowid) AS id FROM message`
-	db, err := m.getDB()
+
+	dbase, err := m.getDB()
 	if err != nil {
 		return err
 	}
-	defer m.closeDB(db)
-	query, _, err := db.PrepareTransient(sql)
+
+	defer m.closeDB(dbase)
+
+	query, _, err := dbase.PrepareTransient(sql)
 	if err != nil {
 		return err
 	}
 
 	m.DebugLog.Print("querying current id")
+
 	if hasrow, err := query.Step(); err != nil {
 		m.ErrorLog.Printf("%s: %q\n", sql, err)
 		return err
 	} else if !hasrow {
 		_ = query.Finalize()
-		return errors.New("no message rows found")
+		return ErrNoRows
 	}
+
 	m.currentID = query.GetInt64("id")
+
 	return query.Finalize()
 }
 
 // handleIncoming runs the call back funcs and notifies the call back channels.
 func (m *Messages) handleIncoming(msg Incoming) {
 	m.DebugLog.Printf("new message id %d from: %s size: %d", msg.RowID, msg.From, len(msg.Text))
+
 	m.binds.RLock()
 	defer m.binds.RUnlock()
+
 	// Handle call back functions.
 	for _, bind := range m.Funcs {
 		if matched, err := regexp.MatchString(bind.Match, msg.Text); err != nil {
@@ -214,9 +246,10 @@ func (m *Messages) handleIncoming(msg Incoming) {
 			continue
 		}
 
-		m.DebugLog.Printf("found matching message handler func: %v", bind.Match)
 		go bind.Func(msg)
+		m.DebugLog.Printf("found matching message handler func: %v", bind.Match)
 	}
+
 	// Handle call back channels.
 	for _, bind := range m.Chans {
 		if matched, err := regexp.MatchString(bind.Match, msg.Text); err != nil {

@@ -10,7 +10,14 @@ import (
 	"time"
 )
 
+const (
+	sleepTime = 100 * time.Millisecond
+	clearTime = 2 * time.Minute
+)
+
 // OSAScriptPath is the path to the osascript binary. macOS only.
+//
+//nolint:gochecknoglobals
 var OSAScriptPath = "/usr/bin/osascript"
 
 // Outgoing struct is used to send a message to someone.
@@ -45,32 +52,43 @@ func (m *Messages) Send(msg Outgoing) {
 // RunAppleScript runs a script on the local system. While not directly related to
 // iMessage and Messages.app, this library uses AppleScript to send messages using
 // imessage. To that end, the method to run scripts is also exposed for convenience.
-func (m *Messages) RunAppleScript(scripts []string) (success bool, errs []error) {
+func (m *Messages) RunAppleScript(scripts []string) (bool, []error) {
 	arg := []string{OSAScriptPath}
 	for _, s := range scripts {
 		arg = append(arg, "-e", s)
 	}
+
 	m.DebugLog.Printf("AppleScript Command: %v", strings.Join(arg, " "))
+
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(m.Config.Timeout)*time.Second)
 	defer cancel()
+
+	var (
+		success bool
+		errs    []error
+	)
 
 	for i := 1; i <= m.Config.Retries && !success; i++ {
 		if i > 1 {
 			// we had an error, don't be so quick to try again.
-			time.Sleep(500 * time.Millisecond)
+			time.Sleep(time.Second)
 		}
+
+		cmd := exec.CommandContext(ctx, arg[0], arg[1:]...) //nolint:gosec
+
 		var out bytes.Buffer
-		cmd := exec.CommandContext(ctx, arg[0], arg[1:]...)
 		cmd.Stdout = &out
 		cmd.Stderr = &out
 
 		if err := cmd.Run(); err != nil {
-			errs = append(errs, fmt.Errorf("exec: %v: %v", err, out.String()))
+			errs = append(errs, fmt.Errorf("exec: %w: %v", err, out.String()))
 			continue
 		}
+
 		success = true
 	}
-	return
+
+	return success, errs
 }
 
 // ClearMessages deletes all conversations in MESSAGES.APP.
@@ -92,29 +110,36 @@ end tell
 	if sent, err := m.RunAppleScript([]string{arg}); !sent && err != nil {
 		return err[0]
 	}
-	time.Sleep(100 * time.Millisecond)
+
+	time.Sleep(sleepTime)
+
 	return nil
 }
 
 // processOutgoingMessages keeps an eye out for outgoing messages; then processes them.
 func (m *Messages) processOutgoingMessages() {
-	clearTicker := time.NewTicker(2 * time.Minute)
+	clearTicker := time.NewTicker(clearTime)
 	defer clearTicker.Stop()
+
 	newMsg := true
+
 	for {
 		select {
 		case msg, ok := <-m.outChan:
 			if !ok {
 				return
 			}
+
 			newMsg = true
 			response := m.sendiMessage(msg)
+
 			if msg.Call != nil {
 				go msg.Call(response)
 			}
 		case <-clearTicker.C:
 			if m.ClearMsgs && newMsg {
 				newMsg = false
+
 				m.DebugLog.Print("Clearing Messages.app Conversations")
 				m.checkErr(m.ClearMessages(), "clearing messages")
 			}
@@ -126,13 +151,16 @@ func (m *Messages) processOutgoingMessages() {
 func (m *Messages) sendiMessage(msg Outgoing) *Response {
 	arg := []string{`tell application "Messages" to send "` + msg.Text + `" to buddy "` + msg.To +
 		`" of (1st service whose service type = iMessage)`}
+
 	if _, err := os.Stat(msg.Text); err == nil && msg.File {
 		arg = []string{`tell application "Messages" to send (POSIX file ("` + msg.Text + `")) to buddy "` + msg.To +
 			`" of (1st service whose service type = iMessage)`}
 	}
+
 	arg = append(arg, `tell application "Messages" to close every window`)
 	sent, errs := m.RunAppleScript(arg)
 	// Messages can go out so quickly we need to sleep a bit to avoid sending duplicates.
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(sleepTime)
+
 	return &Response{ID: msg.ID, To: msg.To, Text: msg.Text, Errs: errs, Sent: sent}
 }
